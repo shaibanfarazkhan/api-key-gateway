@@ -1,8 +1,8 @@
-# API Key Gateway
+﻿# API Key Gateway
 
-Production-oriented Phase 0 foundation for an API Key Gateway. This phase sets
-up the project, tooling, and infrastructure integrations. It intentionally has
-no endpoints or business logic yet.
+Enterprise-grade API Key Gateway designed to provide read-only Quotes API access with organization-scoped API keys, key rotation, Redis-backed rate limiting, PostgreSQL usage tracking, and monthly quotas.
+
+This repository currently contains the service foundation and Phase 1 system design. The application does not yet register the planned API routes or business logic.
 
 ## Requirements
 
@@ -18,24 +18,17 @@ no endpoints or business logic yet.
 4. Start the ASGI application: `uv run uvicorn app.main:app --reload`.
 5. Apply database migrations when migration revisions are introduced: `uv run alembic upgrade head`.
 
-The Phase 0 application currently registers no HTTP routes. PostgreSQL is
-available at `localhost:5432` and Redis at `localhost:6379` using the local
-development credentials in Compose.
+The application currently registers no HTTP routes. PostgreSQL is available at `localhost:5432` and Redis at `localhost:6379` using the local development credentials in Compose.
 
 ## Docker Compose
 
-`docker compose up --build` starts the API container, PostgreSQL, and Redis.
-The API container runs as a non-root user and uses a read-only root filesystem.
-For local host development, use `docker compose up -d postgres redis` instead.
+`docker compose up --build` starts the API container, PostgreSQL, and Redis. The API container runs as a non-root user and uses a read-only root filesystem. For local host development, use `docker compose up -d postgres redis` instead.
 
 ## Development commands
 
-Run `make install-dev` to install dependencies and `make lint`, `make format`,
-`make typecheck`, and `make test` for quality checks. Run `pre-commit install`
-once to enable the configured hooks. `make ci` runs the local CI checks.
+Run `make install-dev` to install dependencies and `make lint`, `make format`, `make typecheck`, and `make test` for quality checks. Run `pre-commit install` once to enable the configured hooks. `make ci` runs the local CI checks.
 
-Create an Alembic revision with `make revision message="describe schema change"`
-and apply it with `make migrate`. Review generated migrations before committing.
+Create an Alembic revision with `make revision message="describe schema change"` and apply it with `make migrate`. Review generated migrations before committing.
 
 ## Project layout
 
@@ -50,6 +43,4 @@ scripts/      Developer and operational scripts
 
 ## Configuration
 
-Settings are read from environment variables, with `.env` supported for local
-development. See `.env.example` for the available Phase 0 settings. Never commit
-real secrets or production credentials.
+Settings are read from environment variables, with `.env` supported for local development. See `.env.example` for the available Phase 0 settings. Never commit real secrets or production credentials.
