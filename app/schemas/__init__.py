@@ -1,1 +1,1 @@
-"""Pydantic schemas will be added in a later phase."""
+"""Pydantic schemas for API requests and responses."""
