@@ -1,6 +1,7 @@
 """API key metadata model. Plaintext API keys are never persisted."""
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint, func
@@ -8,6 +9,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.organization import Organization
+    from app.models.usage_record import UsageRecord
 
 
 class APIKey(Base):

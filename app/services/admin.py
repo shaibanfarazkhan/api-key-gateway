@@ -5,13 +5,12 @@ import secrets
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import APIKey, Organization, Plan
-from app.models.organization import organization_plans
 
 
 class OrganizationService:
@@ -20,19 +19,25 @@ class OrganizationService:
 
     def create(self, *, name: str, slug: str) -> Organization:
         if self.db.scalar(select(Organization.id).where(Organization.slug == slug)):
-            raise HTTPException(status_code=409, detail="Organization slug already exists")
+            raise HTTPException(
+                status_code=409, detail="Organization slug already exists"
+            )
         organization = Organization(name=name.strip(), slug=slug)
         self.db.add(organization)
         try:
             self.db.commit()
         except IntegrityError as exc:
             self.db.rollback()
-            raise HTTPException(status_code=409, detail="Organization slug already exists") from exc
+            raise HTTPException(
+                status_code=409, detail="Organization slug already exists"
+            ) from exc
         self.db.refresh(organization)
         return organization
 
     def list(self) -> list[Organization]:
-        return list(self.db.scalars(select(Organization).order_by(Organization.created_at)))
+        return list(
+            self.db.scalars(select(Organization).order_by(Organization.created_at))
+        )
 
     def get(self, organization_id: UUID) -> Organization:
         organization = self.db.get(Organization, organization_id)
@@ -55,14 +60,23 @@ class PlanService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def create(self, *, name: str, requests_per_minute: int, monthly_quota: int, active: bool) -> Plan:
-        plan = Plan(name=name.strip(), requests_per_minute=requests_per_minute, monthly_quota=monthly_quota, active=active)
+    def create(
+        self, *, name: str, requests_per_minute: int, monthly_quota: int, active: bool
+    ) -> Plan:
+        plan = Plan(
+            name=name.strip(),
+            requests_per_minute=requests_per_minute,
+            monthly_quota=monthly_quota,
+            active=active,
+        )
         self.db.add(plan)
         try:
             self.db.commit()
         except IntegrityError as exc:
             self.db.rollback()
-            raise HTTPException(status_code=409, detail="Plan name already exists") from exc
+            raise HTTPException(
+                status_code=409, detail="Plan name already exists"
+            ) from exc
         self.db.refresh(plan)
         return plan
 
@@ -74,7 +88,13 @@ class APIKeyService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def create(self, organization_id: UUID, *, expires_at: datetime | None = None, rotated_from_id: UUID | None = None) -> tuple[APIKey, str]:
+    def create(
+        self,
+        organization_id: UUID,
+        *,
+        expires_at: datetime | None = None,
+        rotated_from_id: UUID | None = None,
+    ) -> tuple[APIKey, str]:
         if self.db.get(Organization, organization_id) is None:
             raise HTTPException(status_code=404, detail="Organization not found")
         plaintext = f"{self.KEY_PREFIX}{secrets.token_urlsafe(32)}"
@@ -96,7 +116,11 @@ class APIKeyService:
         if previous is None:
             raise HTTPException(status_code=404, detail="API key not found")
         # Keep the previous key active; the replacement records its lineage.
-        return self.create(previous.organization_id, expires_at=previous.expires_at, rotated_from_id=previous.id)
+        return self.create(
+            previous.organization_id,
+            expires_at=previous.expires_at,
+            rotated_from_id=previous.id,
+        )
 
     def revoke(self, key_id: UUID) -> APIKey:
         key = self.db.get(APIKey, key_id)

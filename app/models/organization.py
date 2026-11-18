@@ -1,6 +1,7 @@
 """Organization model and organization-to-plan association table."""
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -17,6 +18,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.api_key import APIKey
+    from app.models.plan import Plan
+    from app.models.usage_record import UsageRecord
 
 organization_plans = Table(
     "organization_plans",

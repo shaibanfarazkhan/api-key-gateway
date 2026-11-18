@@ -1,6 +1,7 @@
 """Monthly per-key usage record model."""
 
 from datetime import date, datetime
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -17,6 +18,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import Uuid
 
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.models.api_key import APIKey
+    from app.models.organization import Organization
 
 
 class UsageRecord(Base):

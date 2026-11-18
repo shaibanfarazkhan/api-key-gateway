@@ -60,9 +60,7 @@ def upgrade() -> None:
             server_default=sa.func.now(),
             nullable=False,
         ),
-        sa.CheckConstraint(
-            "requests_per_minute >= 0", name="ck_plans_rpm_nonnegative"
-        ),
+        sa.CheckConstraint("requests_per_minute >= 0", name="ck_plans_rpm_nonnegative"),
         sa.CheckConstraint("monthly_quota >= 0", name="ck_plans_quota_nonnegative"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("name", name="uq_plans_name"),

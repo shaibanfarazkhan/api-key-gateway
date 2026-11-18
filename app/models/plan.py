@@ -1,6 +1,7 @@
 """Plan model."""
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -17,6 +18,9 @@ from sqlalchemy.types import Uuid
 
 from app.core.database import Base
 from app.models.organization import organization_plans
+
+if TYPE_CHECKING:
+    from app.models.organization import Organization
 
 
 class Plan(Base):

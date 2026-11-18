@@ -2,12 +2,11 @@
 
 from logging.config import fileConfig
 
-from alembic import context
-from sqlalchemy import engine_from_config, pool
-
 import app.models  # noqa: F401  # Register model metadata for Alembic autogeneration.
+from alembic import context
 from app.core.config import get_settings
 from app.core.database import Base
+from sqlalchemy import engine_from_config, pool
 
 config = context.config
 config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
