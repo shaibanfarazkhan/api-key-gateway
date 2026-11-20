@@ -21,12 +21,11 @@ development; Redis-backed rate limiting is not implemented yet.
 - Pytest covers administrative routes, API key authentication, and monthly quota
   reservation.
 
-The authentication dependency and quota service are implemented as reusable
-components, but neither is currently attached to a customer-facing route. There
-is no `GET /v1/quote` or `GET /usage` endpoint yet. Redis is configured in the
-application and Compose, but no application code currently uses it for rate
-limiting or caching. The admin endpoints do not yet require an administrative
-identity.
+`GET /v1/quote` uses the authentication dependency and monthly quota service and
+returns a clearly marked dummy quote. A real quote provider is not connected yet.
+There is no `GET /usage` endpoint. Redis is configured in the application and
+Compose, but no application code currently uses it for rate limiting or caching.
+The admin endpoints do not yet require an administrative identity.
 
 ## Architecture
 
@@ -49,7 +48,9 @@ The admin router delegates organization, plan, and key operations to
 `app/services/authentication.py` and `app/repositories/api_keys.py`. Monthly
 quota policy is in `app/services/quota.py`, with persistence operations in
 `app/repositories/usage.py`. Request and response schemas are in `app/schemas`.
-Alembic manages database schema revisions under `migrations/`.
+The protected quote route is in `app/api/quotes.py` and uses
+`app/schemas/quotes.py` for its response model. Alembic manages database schema
+revisions under `migrations/`.
 
 ## API endpoints
 
@@ -63,6 +64,7 @@ Alembic manages database schema revisions under `migrations/`.
 | `POST` | `/admin/api-keys` | Create an API key and return its plaintext once. |
 | `POST` | `/admin/api-keys/{key_id}/rotate` | Create a replacement key; the existing key remains active. |
 | `POST` | `/admin/api-keys/{key_id}/revoke` | Revoke an API key. |
+| `GET` | `/v1/quote` | Authenticate the API key, reserve monthly quota, and return a dummy quote. |
 
 FastAPI's interactive API documentation is available at `/docs` when the local
 application is running.
@@ -70,14 +72,12 @@ application is running.
 ## Development status
 
 The repository includes the Phase 1 design, a working admin and persistence
-foundation, API key authentication components, and a monthly quota reservation
-service. The authentication and quota components have unit/API tests, but the
-quota service is not yet called by a customer request route.
+foundation, API key authentication, monthly quota reservation, and a protected
+dummy quote endpoint. The quote provider is still a placeholder.
 
 Remaining implementation includes an agreed administrative authentication
-mechanism, a customer-facing route and quote provider contract, integration of
-authentication and quota reservation into that request path, Redis-backed rate
-limiting, and organization-scoped usage reporting. See [docs/DESIGN.md](docs/DESIGN.md)
+mechanism, an approved quote provider contract and implementation, Redis-backed
+rate limiting, and organization-scoped usage reporting. See [docs/DESIGN.md](docs/DESIGN.md)
 for the proposed design and its open product decisions, and
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for known limitations.
 
@@ -128,7 +128,7 @@ app/
   services/     Admin operations, authentication, and quota policy
   main.py       FastAPI application entry point
 migrations/     Alembic environment and schema revisions
-tests/          Administrative API, authentication, and quota tests
+tests/          Administrative API, authentication, quota, and quote tests
 docs/           Design RFC and limitations
 scripts/        Operational and developer script placeholders
 .github/        GitHub Actions workflows

@@ -5,10 +5,10 @@ management, API key creation/rotation/revocation, a reusable API key
 authentication dependency, and a monthly quota reservation service. Automated
 tests cover the administrative API, authentication behavior, and quota service.
 
-The authentication dependency and quota service are not yet connected to a
-customer-facing endpoint. In particular, the planned `GET /v1/quote` and
-`GET /usage` routes are not implemented. The quote provider contract and the
-administrative identity mechanism are still open design decisions.
+The protected `GET /v1/quote` route currently returns a dummy quote after
+authentication and quota reservation. A real quote provider is not connected.
+The planned `GET /usage` route is not implemented. The quote provider contract
+and the administrative identity mechanism are still open design decisions.
 
 Redis is configured as a dependency in the application and in Docker Compose,
 but Redis-backed rate limiting and caching are not implemented. The current
