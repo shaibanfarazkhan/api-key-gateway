@@ -1,9 +1,9 @@
 # API Key Gateway
 
 FastAPI service foundation for organization-scoped API keys, plan administration,
-API key authentication, and monthly quota reservation. PostgreSQL is the source of
-persisted application data. Docker Compose also provides a Redis service for local
-development; Redis-backed rate limiting is not implemented yet.
+API key authentication, monthly quota reservation, and Redis-backed organization
+rate limiting. PostgreSQL stores application data; Redis shares sliding-window
+counters across application instances.
 
 ## Current implementation
 
@@ -18,14 +18,18 @@ development; Redis-backed rate limiting is not implemented yet.
   usage in the existing monthly `UsageRecord` table. Quota is aggregated across
   the organization's keys. The service returns `429` when the monthly allowance
   is exhausted.
+- `GET /v1/quote` also applies the plan's per-minute organization rate limit using
+  an atomic Redis sliding window. Excess requests receive `429` with `Retry-After`.
+- `GET /usage` returns a read-only current-month summary for the authenticated
+  organization, including plan limits, requests used, and remaining quota.
 - Pytest covers administrative routes, API key authentication, and monthly quota
   reservation.
 
 `GET /v1/quote` uses the authentication dependency and monthly quota service and
 returns a clearly marked dummy quote. A real quote provider is not connected yet.
-There is no `GET /usage` endpoint. Redis is configured in the application and
-Compose, but no application code currently uses it for rate limiting or caching.
-The admin endpoints do not yet require an administrative identity.
+`GET /usage` provides a read-only current-month summary scoped to the
+authenticated organization. Redis is not used for caching. The admin endpoints
+do not yet require an administrative identity.
 
 ## Architecture
 
@@ -65,6 +69,7 @@ revisions under `migrations/`.
 | `POST` | `/admin/api-keys/{key_id}/rotate` | Create a replacement key; the existing key remains active. |
 | `POST` | `/admin/api-keys/{key_id}/revoke` | Revoke an API key. |
 | `GET` | `/v1/quote` | Authenticate the API key, reserve monthly quota, and return a dummy quote. |
+| `GET` | `/usage` | Return current-month usage and plan limits for the authenticated organization. |
 
 FastAPI's interactive API documentation is available at `/docs` when the local
 application is running.
@@ -72,12 +77,13 @@ application is running.
 ## Development status
 
 The repository includes the Phase 1 design, a working admin and persistence
-foundation, API key authentication, monthly quota reservation, and a protected
-dummy quote endpoint. The quote provider is still a placeholder.
+foundation, API key authentication, monthly quota reservation, Redis-backed
+organization rate limiting, a protected dummy quote endpoint, and read-only
+current-month usage reporting. The quote provider is still a placeholder.
 
 Remaining implementation includes an agreed administrative authentication
-mechanism, an approved quote provider contract and implementation, Redis-backed
-rate limiting, and organization-scoped usage reporting. See [docs/DESIGN.md](docs/DESIGN.md)
+mechanism and an approved quote provider contract and implementation. See
+[docs/DESIGN.md](docs/DESIGN.md)
 for the proposed design and its open product decisions, and
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for known limitations.
 
@@ -128,7 +134,7 @@ app/
   services/     Admin operations, authentication, and quota policy
   main.py       FastAPI application entry point
 migrations/     Alembic environment and schema revisions
-tests/          Administrative API, authentication, quota, and quote tests
+tests/          Administrative API, authentication, quota, quote, and usage tests
 docs/           Design RFC and limitations
 scripts/        Operational and developer script placeholders
 .github/        GitHub Actions workflows

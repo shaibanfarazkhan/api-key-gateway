@@ -3,8 +3,10 @@
 import hashlib
 import os
 from collections.abc import Generator
+from uuid import UUID
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -17,12 +19,20 @@ from app.core.database import Base  # noqa: E402
 from app.core.dependencies import get_db  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import APIKey, Organization, Plan, UsageRecord  # noqa: E402
+from app.services.rate_limiter import RateLimitService  # noqa: E402
 
 PLAINTEXT_KEY = "ak_quote-endpoint-test-key"
 
 
+class AllowRedis:
+    def eval(self, script: str, numkeys: int, *keys_and_args: object) -> list[int]:
+        return [1, 0]
+
+
 @pytest.fixture
-def client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
+def client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -35,6 +45,7 @@ def client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
         with test_session() as session:
             yield session
 
+    monkeypatch.setattr("app.services.rate_limiter.redis_client", AllowRedis())
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as test_client:
         yield test_client, test_session
@@ -108,3 +119,26 @@ def test_quote_returns_existing_quota_exhaustion_error(client) -> None:
 
     assert response.status_code == 429
     assert response.json()["detail"] == "Monthly request quota exhausted"
+
+
+def test_quote_returns_rate_limit_error_and_retry_after(
+    client, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    test_client, session_factory = client
+    create_customer(session_factory, quota=10)
+
+    def reject_request(self: RateLimitService, organization_id: UUID) -> None:
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": "17"},
+        )
+
+    monkeypatch.setattr(RateLimitService, "enforce", reject_request)
+    response = test_client.get(
+        "/v1/quote", headers={"Authorization": f"Bearer {PLAINTEXT_KEY}"}
+    )
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "17"
+    assert response.json()["detail"] == "Rate limit exceeded"

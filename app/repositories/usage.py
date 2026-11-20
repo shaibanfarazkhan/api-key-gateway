@@ -15,6 +15,16 @@ class UsageRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
+    def get_monthly_request_count(self, *, organization_id: UUID, month: date) -> int:
+        """Return persisted request usage for one organization and month."""
+        count = self.db.scalar(
+            select(func.coalesce(func.sum(UsageRecord.request_count), 0)).where(
+                UsageRecord.organization_id == organization_id,
+                UsageRecord.month == month,
+            )
+        )
+        return int(count or 0)
+
     def reserve_monthly_request(
         self,
         *,
