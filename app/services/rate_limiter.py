@@ -1,5 +1,8 @@
 """Redis-backed sliding-window rate limiting."""
 
+from __future__ import annotations
+
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
@@ -47,7 +50,7 @@ return {1, 0}
 class RateLimitService:
     """Enforce plan-based per-organization sliding windows in Redis."""
 
-    def __init__(self, db: Session, redis: Redis | None = None) -> None:
+    def __init__(self, db: Session, redis: Redis[Any] | None = None) -> None:
         self.db = db
         self.redis = redis if redis is not None else redis_client
         self.environment = get_settings().app_env
@@ -71,7 +74,7 @@ class RateLimitService:
             f"{self.environment}:api-gateway:rate-limit:organization:{organization_id}"
         )
         try:
-            allowed, retry_after = self.redis.eval(
+            allowed, retry_after = cast(Any, self.redis).eval(
                 SLIDING_WINDOW_SCRIPT,
                 1,
                 redis_key,

@@ -42,7 +42,9 @@ def client() -> Generator[tuple[TestClient, sessionmaker[Session]], None, None]:
 
     @app.get("/protected")
     def protected(
-        principal: AuthenticatedPrincipal = Depends(get_authenticated_principal),  # noqa: B008
+        principal: AuthenticatedPrincipal = Depends(  # noqa: B008
+            get_authenticated_principal
+        ),
     ) -> dict[str, str]:
         return {
             "organization_id": str(principal.organization.id),

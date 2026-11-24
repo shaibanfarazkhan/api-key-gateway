@@ -32,7 +32,9 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def get_authenticated_principal(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),  # noqa: B008
+    credentials: HTTPAuthorizationCredentials | None = Depends(  # noqa: B008
+        bearer_scheme
+    ),
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AuthenticatedPrincipal:
     """Authenticate a bearer API key and return its organization and key."""

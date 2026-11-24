@@ -24,16 +24,16 @@ format:
 	uv run black .
 
 typecheck:
-	uv run mypy app
+	uv run python -m mypy .
 
 test:
-	uv run pytest
+	uv run python -m pytest
 
 ci: lint
 	uv run ruff format --check .
 	uv run black --check .
-	uv run mypy app
-	uv run pytest
+	uv run python -m mypy .
+	uv run python -m pytest
 
 compose-up:
 	docker compose up --build -d

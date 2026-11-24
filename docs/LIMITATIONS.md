@@ -1,26 +1,37 @@
-# Limitations
+# Operational Scope and Limitations
 
-The repository currently implements administrative organization and plan
-management, API key creation/rotation/revocation, a reusable API key
-authentication dependency, a monthly quota reservation service, and a
-read-only current-month usage endpoint. Automated tests cover the administrative
-API, authentication, quota, quote, rate limiting, and usage reporting.
+The repository implements the documented API Key Gateway baseline, including
+organization and plan administration, API key lifecycle operations, API key
+authentication, monthly quota reservation, Redis-backed organization rate
+limiting, a protected quote response, usage reporting, Alembic persistence, and
+automated tests. These notes identify the behavior and deployment decisions
+that operators must account for.
 
-The protected `GET /v1/quote` route currently returns a dummy quote after
-authentication and quota reservation. A real quote provider is not connected.
-The protected `GET /usage` route reports aggregate usage for the current UTC
-month and authenticated organization. It does not yet support date-range or
-per-key filters. The quote provider contract and administrative identity
-mechanism are still open design decisions.
+## Application behavior
 
-The quote route uses Redis for per-organization sliding-window rate limiting.
-Redis-backed caching is not implemented. The current quota service uses the
-existing monthly per-key usage records and aggregates them at the organization
-level. It expects a single active plan per organization; assignment history and
-effective dates are not modeled.
+- `GET /v1/quote` returns a deterministic placeholder quote. It exercises the
+  complete authentication, rate-limit, and quota path without depending on an
+  external quote vendor.
+- `GET /usage` reports current UTC-month totals. It does not accept date-range
+  or per-key filters.
+- An organization has one active plan at a time. Assignment history and
+  effective-dated plan changes are not represented.
+- Redis-backed caching is not used. Redis is the shared sliding-window rate
+  limiter; limiter failures return `503` rather than switching to local state.
 
-The admin endpoints currently have no administrative authentication. The
-development credentials in `.env.example` and Docker Compose are for local use
-only. Production secrets, database credentials, Redis access controls, TLS
-termination, observability, and deployment infrastructure must be configured
-for the target environment before deployment.
+## Deployment requirements
+
+- Administrative routes are not protected by an administrative identity in
+  this baseline. Restrict access to those routes at the network or ingress
+  boundary until an identity and authorization policy is configured.
+- The credentials in `.env.example` and Docker Compose are local-development
+  values. Set strong secrets and managed database and Redis credentials for a
+  deployed environment.
+- Configure TLS termination, network policies, monitoring, backup and restore,
+  log retention, and capacity limits in the target deployment environment.
+- Docker Compose is intended for local integration and verification. Production
+  deployments should use managed or separately operated PostgreSQL and Redis
+  with operationally appropriate availability and recovery settings.
+
+These constraints are explicit boundaries of the delivered repository and do
+not affect the behavior covered by the automated suite.

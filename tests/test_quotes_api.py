@@ -127,7 +127,9 @@ def test_quote_returns_rate_limit_error_and_retry_after(
     test_client, session_factory = client
     create_customer(session_factory, quota=10)
 
-    def reject_request(self: RateLimitService, organization_id: UUID) -> None:
+    def reject_request(
+        self: RateLimitService, organization_id: UUID, plan=None
+    ) -> None:
         raise HTTPException(
             status_code=429,
             detail="Rate limit exceeded",

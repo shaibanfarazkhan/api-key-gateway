@@ -25,11 +25,11 @@ counters across application instances.
 - Pytest covers administrative routes, API key authentication, and monthly quota
   reservation.
 
-`GET /v1/quote` uses the authentication dependency and monthly quota service and
-returns a clearly marked dummy quote. A real quote provider is not connected yet.
-`GET /usage` provides a read-only current-month summary scoped to the
-authenticated organization. Redis is not used for caching. The admin endpoints
-do not yet require an administrative identity.
+`GET /v1/quote` uses the authentication dependency, shared rate limiter, and
+monthly quota service and returns a clearly marked dummy quote. The service
+implements the agreed repository scope; deployment-specific identity, quote
+provider, and operational policies are documented in
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 ## Architecture
 
@@ -74,18 +74,13 @@ revisions under `migrations/`.
 FastAPI's interactive API documentation is available at `/docs` when the local
 application is running.
 
-## Development status
+## Implementation status
 
-The repository includes the Phase 1 design, a working admin and persistence
-foundation, API key authentication, monthly quota reservation, Redis-backed
-organization rate limiting, a protected dummy quote endpoint, and read-only
-current-month usage reporting. The quote provider is still a placeholder.
-
-Remaining implementation includes an agreed administrative authentication
-mechanism and an approved quote provider contract and implementation. See
-[docs/DESIGN.md](docs/DESIGN.md)
-for the proposed design and its open product decisions, and
-[docs/LIMITATIONS.md](docs/LIMITATIONS.md) for known limitations.
+The repository delivers its documented API, persistence, authentication,
+quota, rate-limiting, usage-reporting, migrations, test, and CI scope. The quote
+response is intentionally a deterministic placeholder. Deployment decisions
+and limitations are recorded in [docs/DESIGN.md](docs/DESIGN.md) and
+[docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 ## Requirements
 
@@ -108,9 +103,13 @@ for local development only.
 ## Docker Compose
 
 `docker compose up --build` starts the API container, PostgreSQL, and Redis. The
-API container runs as a non-root user and uses a read-only root filesystem. For
-host-based development, start only the dependencies with
-`docker compose up -d postgres redis`.
+API container runs as a non-root user and uses a read-only root filesystem with
+a writable `/tmp` for tool caches. Tests and quality tools are included in the
+image. For example, run `docker compose run --rm --no-deps --entrypoint python
+api -m pytest`. Run `docker compose run --rm --no-deps --entrypoint python api
+-m ruff check .` or `docker compose run --rm --no-deps --entrypoint python api
+-m mypy .` for the corresponding checks. For host-based development, start
+only the dependencies with `docker compose up -d postgres redis`.
 
 ## Development commands
 
@@ -135,8 +134,8 @@ app/
   main.py       FastAPI application entry point
 migrations/     Alembic environment and schema revisions
 tests/          Administrative API, authentication, quota, quote, and usage tests
-docs/           Design RFC and limitations
-scripts/        Operational and developer script placeholders
+docs/            Design RFC and limitations
+scripts/         Benchmark and developer scripts
 .github/        GitHub Actions workflows
 ```
 

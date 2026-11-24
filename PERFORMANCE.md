@@ -14,10 +14,12 @@
 | Service placement | API, PostgreSQL, and Redis in local Docker Compose; benchmark client on the host |
 
 The stack was already running when the initial run began. The API image was
-rebuilt from the same Dockerfile and restarted before the optimized run. The
-Dockerfile installs ranged dependencies without a committed runtime lock, so
-dependency-version drift across the rebuild cannot be ruled out. Host CPU and
-memory are omitted because the environment did not permit querying them.
+rebuilt from the same Dockerfile and restarted before the optimized run. At the
+time of these benchmark runs, the Dockerfile installed ranged dependencies
+without a committed runtime lock, so dependency-version drift across that
+rebuild cannot be ruled out. The current Docker build installs dependencies
+from `uv.lock` and uses the stable mypy pin documented in the CI setup. Host CPU
+and memory are omitted because the environment did not permit querying them.
 
 ## Methodology
 

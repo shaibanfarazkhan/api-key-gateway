@@ -52,7 +52,7 @@ strict = true
 mypy_path = "."
 plugins = ["pydantic.mypy"]
 warn_unreachable = true
-exclude = ["migrations/versions/"]
+exclude = ["^tests/", "^scripts/", "^migrations/"]
 
 [[tool.mypy.overrides]]
 module = ["alembic.*"]
@@ -62,7 +62,7 @@ ignore_missing_imports = true
 minversion = "8.0"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-ra --strict-config --strict-markers"
+addopts = "-ra --strict-config --strict-markers -p no:cacheprovider"
 
 [tool.coverage.run]
 branch = true

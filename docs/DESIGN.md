@@ -1,6 +1,6 @@
 ﻿# API Key Gateway â€” Engineering RFC
 
-**Status:** Proposed design
+**Status:** Implemented baseline design; deployment-specific decisions are recorded in Limitations
 **Scope:** Phase 1 design for a production-grade gateway to a read-only Quotes API
 **Runtime baseline:** Python 3.11, FastAPI, SQLAlchemy 2, Alembic, PostgreSQL 15, Redis, Docker Compose, pytest, Ruff, and mypy
 

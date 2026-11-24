@@ -48,6 +48,8 @@ jobs:
           enable-cache: true
       - name: Install dependencies
         run: uv sync --all-groups
+      - name: Pin stable mypy release
+        run: uv pip install --python .venv/bin/python mypy==1.15.0
       - name: Ruff lint
         run: uv run ruff check .
       - name: Ruff format check
@@ -55,6 +57,6 @@ jobs:
       - name: Black check
         run: uv run black --check .
       - name: MyPy
-        run: uv run mypy app
+        run: uv run python -m mypy .
       - name: Pytest
-        run: uv run pytest
+        run: uv run python -m pytest

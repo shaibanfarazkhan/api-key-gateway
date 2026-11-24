@@ -11,9 +11,9 @@ from app.core.dependencies import (
     get_db,
 )
 from app.schemas.quotes import QuoteResponse
+from app.services.plans import get_active_plan
 from app.services.quota import QuotaService
 from app.services.rate_limiter import RateLimitService
-from app.services.plans import get_active_plan
 
 router = APIRouter(prefix="/v1", tags=["quotes"])
 

@@ -53,6 +53,7 @@ async def run_benchmark(
     async with httpx.AsyncClient(
         headers=headers, limits=limits, timeout=timeout
     ) as client:
+
         async def send_request() -> None:
             nonlocal successful, failed
             async with semaphore:
