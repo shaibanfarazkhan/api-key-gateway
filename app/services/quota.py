@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.models import Organization, Plan, UsageRecord
 from app.repositories.usage import UsageRepository
+from app.services.plans import get_active_plan
 
 
 class QuotaService:
@@ -19,38 +20,32 @@ class QuotaService:
         self.usage = UsageRepository(db)
 
     def reserve_request(
-        self, *, organization_id: UUID, api_key_id: UUID
+        self,
+        *,
+        organization_id: UUID,
+        api_key_id: UUID,
+        monthly_quota: int | None = None,
     ) -> UsageRecord:
-        organization = self.db.scalar(
-            select(Organization)
-            .options(selectinload(Organization.plans))
-            .where(Organization.id == organization_id)
-        )
-        if organization is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Organization not found",
+        if monthly_quota is None:
+            organization = self.db.scalar(
+                select(Organization)
+                .options(selectinload(Organization.plans))
+                .where(Organization.id == organization_id)
             )
+            if organization is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Organization not found",
+                )
+            plan: Plan = get_active_plan(organization)
+            monthly_quota = plan.monthly_quota
 
-        active_plans = [plan for plan in organization.plans if plan.active]
-        if not active_plans:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Organization has no active plan",
-            )
-        if len(active_plans) > 1:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Organization must have exactly one active plan",
-            )
-
-        plan: Plan = active_plans[0]
         current_month = datetime.now(UTC).date().replace(day=1)
         usage_record = self.usage.reserve_monthly_request(
             organization_id=organization_id,
             api_key_id=api_key_id,
             month=current_month,
-            monthly_quota=plan.monthly_quota,
+            monthly_quota=monthly_quota,
         )
         if usage_record is None:
             raise HTTPException(

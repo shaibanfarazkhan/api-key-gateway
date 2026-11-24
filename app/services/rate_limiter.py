@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.cache import redis_client
 from app.core.config import get_settings
 from app.models import Organization, Plan
+from app.services.plans import get_active_plan
 
 WINDOW_MILLISECONDS = 60_000
 
@@ -51,32 +52,21 @@ class RateLimitService:
         self.redis = redis if redis is not None else redis_client
         self.environment = get_settings().app_env
 
-    def enforce(self, organization_id: UUID) -> None:
+    def enforce(self, organization_id: UUID, plan: Plan | None = None) -> None:
         """Admit a request or raise the applicable policy/dependency error."""
-        organization = self.db.scalar(
-            select(Organization)
-            .options(selectinload(Organization.plans))
-            .where(Organization.id == organization_id)
-        )
-        if organization is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Organization not found",
+        if plan is None:
+            organization = self.db.scalar(
+                select(Organization)
+                .options(selectinload(Organization.plans))
+                .where(Organization.id == organization_id)
             )
+            if organization is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Organization not found",
+                )
+            plan = get_active_plan(organization)
 
-        active_plans = [plan for plan in organization.plans if plan.active]
-        if not active_plans:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Organization has no active plan",
-            )
-        if len(active_plans) > 1:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Organization must have exactly one active plan",
-            )
-
-        plan: Plan = active_plans[0]
         redis_key = (
             f"{self.environment}:api-gateway:rate-limit:organization:{organization_id}"
         )

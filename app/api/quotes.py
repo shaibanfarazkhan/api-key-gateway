@@ -13,6 +13,7 @@ from app.core.dependencies import (
 from app.schemas.quotes import QuoteResponse
 from app.services.quota import QuotaService
 from app.services.rate_limiter import RateLimitService
+from app.services.plans import get_active_plan
 
 router = APIRouter(prefix="/v1", tags=["quotes"])
 
@@ -23,10 +24,12 @@ def get_quote(
     db: Annotated[Session, Depends(get_db)],
 ) -> QuoteResponse:
     """Return a placeholder quote after auth, rate-limit, and quota checks."""
-    RateLimitService(db).enforce(principal.organization.id)
+    plan = get_active_plan(principal.organization)
+    RateLimitService(db).enforce(principal.organization.id, plan)
     QuotaService(db).reserve_request(
         organization_id=principal.organization.id,
         api_key_id=principal.api_key.id,
+        monthly_quota=plan.monthly_quota,
     )
     return QuoteResponse(
         symbol="DEMO",
