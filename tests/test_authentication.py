@@ -15,6 +15,7 @@ from sqlalchemy.pool import StaticPool
 # The application engine is constructed during import; use an isolated SQLite DB.
 os.environ["DATABASE_URL"] = "sqlite://"
 
+from app.core.config import get_settings  # noqa: E402
 from app.core.database import Base  # noqa: E402
 from app.core.dependencies import (  # noqa: E402
     AuthenticatedPrincipal,
@@ -22,6 +23,7 @@ from app.core.dependencies import (  # noqa: E402
     get_db,
 )
 from app.models import APIKey, Organization  # noqa: E402
+from app.services.admin import APIKeyService  # noqa: E402
 
 
 @pytest.fixture
@@ -99,6 +101,51 @@ def test_valid_key_returns_organization_and_api_key(client) -> None:
         "organization_id": str(organization.id),
         "api_key_id": str(api_key.id),
     }
+
+
+def test_rotated_keys_work_during_grace_and_old_key_expires_afterward(client) -> None:
+    test_client, session_factory = client
+    old_plaintext, organization, old_key = create_key(session_factory)
+    settings = get_settings()
+    old_grace = settings.api_key_rotation_grace_seconds
+    settings.api_key_rotation_grace_seconds = 120
+    try:
+        with session_factory() as session:
+            replacement, new_plaintext = APIKeyService(session).rotate(old_key.id)
+            rotation_deadline = session.get(APIKey, old_key.id).rotation_expires_at
+
+        assert rotation_deadline is not None
+        if rotation_deadline.tzinfo is None:
+            rotation_deadline = rotation_deadline.replace(tzinfo=UTC)
+        remaining_seconds = (rotation_deadline - datetime.now(UTC)).total_seconds()
+        assert 119 <= remaining_seconds <= 120
+
+        for plaintext in (old_plaintext, new_plaintext):
+            response = test_client.get(
+                "/protected", headers={"Authorization": f"Bearer {plaintext}"}
+            )
+            assert response.status_code == 200
+            assert response.json()["organization_id"] == str(organization.id)
+
+        with session_factory() as session:
+            expired_old_key = session.get(APIKey, old_key.id)
+            assert expired_old_key is not None
+            expired_old_key.rotation_expires_at = datetime.now(UTC) - timedelta(
+                seconds=1
+            )
+            session.commit()
+
+        old_response = test_client.get(
+            "/protected", headers={"Authorization": f"Bearer {old_plaintext}"}
+        )
+        new_response = test_client.get(
+            "/protected", headers={"Authorization": f"Bearer {new_plaintext}"}
+        )
+        assert old_response.status_code == 401
+        assert new_response.status_code == 200
+        assert replacement.rotated_from_id == old_key.id
+    finally:
+        settings.api_key_rotation_grace_seconds = old_grace
 
 
 def test_invalid_key_is_rejected(client) -> None:

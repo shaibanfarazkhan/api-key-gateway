@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models import Organization, UsageRecord
+from app.models import DailyUsageRecord, Organization, UsageRecord
 
 
 class UsageRepository:
@@ -25,12 +25,32 @@ class UsageRepository:
         )
         return int(count or 0)
 
+    def get_daily_request_counts(
+        self, *, organization_id: UUID, start_day: date, end_day: date
+    ) -> list[tuple[date, int]]:
+        """Return tracked organization usage grouped by UTC day."""
+        statement = (
+            select(
+                DailyUsageRecord.day,
+                func.sum(DailyUsageRecord.request_count),
+            )
+            .where(
+                DailyUsageRecord.organization_id == organization_id,
+                DailyUsageRecord.day >= start_day,
+                DailyUsageRecord.day <= end_day,
+            )
+            .group_by(DailyUsageRecord.day)
+            .order_by(DailyUsageRecord.day)
+        )
+        return [(day, int(count)) for day, count in self.db.execute(statement)]
+
     def reserve_monthly_request(
         self,
         *,
         organization_id: UUID,
         api_key_id: UUID,
         month: date,
+        day: date,
         monthly_quota: int,
     ) -> UsageRecord | None:
         """Increment this key's monthly usage if organization quota remains.
@@ -74,6 +94,24 @@ class UsageRepository:
             self.db.add(usage_record)
         else:
             usage_record.request_count += 1
+
+        daily_record = self.db.scalar(
+            select(DailyUsageRecord).where(
+                DailyUsageRecord.organization_id == locked_organization_id,
+                DailyUsageRecord.api_key_id == api_key_id,
+                DailyUsageRecord.day == day,
+            )
+        )
+        if daily_record is None:
+            daily_record = DailyUsageRecord(
+                organization_id=locked_organization_id,
+                api_key_id=api_key_id,
+                day=day,
+                request_count=1,
+            )
+            self.db.add(daily_record)
+        else:
+            daily_record.request_count += 1
 
         self.db.commit()
         self.db.refresh(usage_record)

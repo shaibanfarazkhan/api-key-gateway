@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import SecretStr
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
     secret_key: str = "development-only-change-me"
     admin_api_key: SecretStr | None = None
+    api_key_rotation_grace_seconds: int = Field(default=300, gt=0)
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -40,11 +40,13 @@ class QuotaService:
             plan: Plan = get_active_plan(organization)
             monthly_quota = plan.monthly_quota
 
-        current_month = datetime.now(UTC).date().replace(day=1)
+        current_day = datetime.now(UTC).date()
+        current_month = current_day.replace(day=1)
         usage_record = self.usage.reserve_monthly_request(
             organization_id=organization_id,
             api_key_id=api_key_id,
             month=current_month,
+            day=current_day,
             monthly_quota=monthly_quota,
         )
         if usage_record is None:

@@ -31,6 +31,13 @@ class APIKeyAuthenticationService:
             if expires_at <= now:
                 self._raise_unauthorized()
 
+        rotation_expires_at = api_key.rotation_expires_at
+        if rotation_expires_at is not None:
+            if rotation_expires_at.tzinfo is None:
+                rotation_expires_at = rotation_expires_at.replace(tzinfo=UTC)
+            if rotation_expires_at <= now:
+                self._raise_unauthorized()
+
         organization = api_key.organization
         if organization.status != "active":
             raise HTTPException(

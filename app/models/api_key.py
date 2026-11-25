@@ -37,6 +37,9 @@ class APIKey(Base):
     prefix: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rotation_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     rotated_from_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("api_keys.id", ondelete="SET NULL")
     )

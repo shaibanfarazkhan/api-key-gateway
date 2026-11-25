@@ -18,7 +18,13 @@ os.environ["DATABASE_URL"] = "sqlite://"
 from app.core.database import Base  # noqa: E402
 from app.core.dependencies import get_db  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models import APIKey, Organization, Plan, UsageRecord  # noqa: E402
+from app.models import (  # noqa: E402
+    APIKey,
+    DailyUsageRecord,
+    Organization,
+    Plan,
+    UsageRecord,
+)
 
 PLAINTEXT_KEY = "ak_usage-endpoint-test-key"
 
@@ -128,6 +134,7 @@ def test_usage_returns_org_scoped_monthly_summary_without_writing(client) -> Non
         "requests_used_this_month": 23,
         "monthly_quota": 100,
         "remaining_quota": 77,
+        "percentage_used": 23.0,
         "requests_per_minute": 25,
         "current_month": datetime.now(UTC).date().replace(day=1).isoformat(),
     }
@@ -141,6 +148,53 @@ def test_usage_returns_org_scoped_monthly_summary_without_writing(client) -> Non
         )
     assert sum(record.request_count for record in records) == 30
     assert api_key.organization_id == organization.id
+
+
+def test_usage_includes_daily_breakdown_only_when_requested(client) -> None:
+    test_client, session_factory = client
+    organization, _, api_key = seed_customer(
+        session_factory, slug="daily-usage-customer", usage=7
+    )
+    today = datetime.now(UTC).date()
+    month_start = today.replace(day=1)
+    with session_factory() as session:
+        other_key = session.scalar(
+            select(APIKey).where(
+                APIKey.organization_id == organization.id,
+                APIKey.id != api_key.id,
+            )
+        )
+        assert other_key is not None
+        session.add_all(
+            [
+                DailyUsageRecord(
+                    organization_id=organization.id,
+                    api_key_id=api_key.id,
+                    day=month_start,
+                    request_count=2,
+                ),
+                DailyUsageRecord(
+                    organization_id=organization.id,
+                    api_key_id=other_key.id,
+                    day=today,
+                    request_count=5,
+                ),
+            ]
+        )
+        session.commit()
+
+    headers = {"Authorization": f"Bearer {PLAINTEXT_KEY}"}
+    default_response = test_client.get("/usage", headers=headers)
+    assert default_response.status_code == 200
+    assert "daily_breakdown" not in default_response.json()
+
+    response = test_client.get("/usage?include_daily=true", headers=headers)
+    assert response.status_code == 200
+    expected = {month_start.isoformat(): 2}
+    expected[today.isoformat()] = expected.get(today.isoformat(), 0) + 5
+    assert response.json()["daily_breakdown"] == [
+        {"day": day, "request_count": count} for day, count in sorted(expected.items())
+    ]
 
 
 def test_usage_is_scoped_to_the_authenticated_organization(client) -> None:

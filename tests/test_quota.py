@@ -15,7 +15,13 @@ from sqlalchemy.pool import StaticPool
 os.environ["DATABASE_URL"] = "sqlite://"
 
 from app.core.database import Base  # noqa: E402
-from app.models import APIKey, Organization, Plan, UsageRecord  # noqa: E402
+from app.models import (  # noqa: E402
+    APIKey,
+    DailyUsageRecord,
+    Organization,
+    Plan,
+    UsageRecord,
+)
 from app.services.quota import QuotaService  # noqa: E402
 
 
@@ -89,6 +95,15 @@ def test_request_is_reserved_and_usage_recorded(session_factory) -> None:
 
     assert record.request_count == 1
     assert record.month == datetime.now(UTC).date().replace(day=1)
+    with session_factory() as session:
+        daily_record = session.scalar(
+            select(DailyUsageRecord).where(
+                DailyUsageRecord.organization_id == organization.id
+            )
+        )
+    assert daily_record is not None
+    assert daily_record.request_count == 1
+    assert daily_record.day == datetime.now(UTC).date()
 
 
 def test_quota_applies_across_all_organization_keys(session_factory) -> None:
@@ -143,6 +158,14 @@ def test_existing_usage_increments_until_quota_is_reached(session_factory) -> No
     )
 
     assert record.request_count == 2
+    with session_factory() as session:
+        daily_record = session.scalar(
+            select(DailyUsageRecord).where(
+                DailyUsageRecord.organization_id == organization.id
+            )
+        )
+    assert daily_record is not None
+    assert daily_record.request_count == 2
     with pytest.raises(HTTPException) as exc_info:
         reserve_request(
             session_factory,
