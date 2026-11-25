@@ -1,36 +1,58 @@
 ﻿# API Key Gateway â€” Engineering RFC
 
-**Status:** Implemented baseline design; deployment-specific decisions are recorded in Limitations
+**Status:** Design reference. The Task 2 checklist below reflects the current repository; target design details not implemented are marked as limitations or Future Work.
 **Scope:** Phase 1 design for a production-grade gateway to a read-only Quotes API
-**Runtime baseline:** Python 3.11, FastAPI, SQLAlchemy 2, Alembic, PostgreSQL 15, Redis, Docker Compose, pytest, Ruff, and mypy
+**Runtime baseline:** Python 3.11, FastAPI, SQLAlchemy 2, Alembic, PostgreSQL 16, Redis 7, Docker Compose, pytest, Ruff, Black, and mypy
 
 ## 1. Executive Summary
 
-This RFC defines a horizontally scalable API Key Gateway that authenticates organization-owned keys and serves a read-only Quotes API. It covers organization and plan records, key issuance, rotation and revocation, monthly quota enforcement, short-term rate limiting, and usage reporting through the required endpoints: `GET /v1/quote`, `POST /admin/keys`, and `GET /usage`.
+This RFC describes an API Key Gateway that authenticates organization-owned keys and serves a read-only Quotes API. The implemented endpoints are `GET /v1/quote`, `/admin` operations including `POST /admin/api-keys`, and `GET /usage`. The checklist below distinguishes the delivered behavior from the broader design target.
 
 PostgreSQL is the authoritative store for organizations, plans, API key metadata, monthly quota accounting, and durable usage records. Redis is shared by all FastAPI instances and holds short-lived rate-limit counters. API key material is shown only at creation and is stored as a SHA-256 digest; generated API keys contain 256 bits of random secret material, and authentication never requires storing the original key. FastAPI routes remain thin and delegate policy and persistence work to services.
 
-The specification does not define quote data source, pricing values, quota sizes, rate-limit values, or administrative identity. This RFC defines interfaces and policy boundaries for those decisions and records them as open questions rather than assigning unsupported product values.
+The specification does not define quote data source, pricing values, quota sizes, rate-limit values, or administrative identity. Those remain product or deployment decisions; the application currently returns a dummy quote and uses a shared configured admin bearer credential.
 
 ## 2. Functional Requirements
 
-1. Serve a read-only quote using `GET /v1/quote`. A successful request returns a quote selected by the configured quote provider. The gateway does not expose quote mutation operations.
-2. Create API keys for an organization using `POST /admin/keys`, subject to an authenticated administrative principal and the organization's plan and state.
-3. Support key rotation: issue a replacement key and allow the old key to remain valid during a bounded overlap window, then revoke it. The overlap duration is policy configuration and must be decided before launch.
-4. Revoke a key so subsequent authenticated requests are rejected.
-5. Enforce each organization's plan-defined monthly request quota and short-term request rate limit.
-6. Report usage using `GET /usage`, scoped to the caller's authorized organization or organizations and a defined time range.
-7. Record durable usage data sufficient to support monthly quota decisions and usage reports.
-8. Run multiple FastAPI instances without relying on instance-local limiter or quota state.
+1. **Partially completed:** `GET /v1/quote` serves a read-only deterministic placeholder. A provider integration is outside the delivered scope.
+2. **Partially completed:** API keys are created at `POST /admin/api-keys` under the shared admin credential. The route checks that the organization exists; it does not require an active plan, check organization state, or enforce organization-scoped admin roles. This route name is the shipped API and is preserved for compatibility; `/admin/keys` is not implemented.
+3. **Completed:** rotation issues a replacement key, keeps the old key valid for the configured overlap (`API_KEY_ROTATION_GRACE_SECONDS`), then rejects it.
+4. **Completed:** admins can revoke keys and authentication rejects revoked keys.
+5. **Completed:** an organization's active plan controls its monthly quota and per-minute sliding-window limit.
+6. **Partially completed:** `GET /usage` is scoped to the authenticated organization and reports current-month totals with optional daily breakdown. Date-range and per-key filters are not implemented.
+7. **Partially completed:** monthly and daily aggregate usage is durable and supports quota/reporting. Per-request usage events and provider outcomes are not stored.
+8. **Completed:** Redis provides shared limiter state and PostgreSQL persists key and usage state across application instances.
+
+## Task 2 submission checklist
+
+| Requirement | Status | Delivered behavior / boundary |
+| --- | --- | --- |
+| Organization and plan administration | Completed | Admin operations create organizations/plans and assign a plan. |
+| API key lifecycle mechanics | Completed | Keys are returned once; only SHA-256 digests are stored; rotation overlap is configurable. |
+| Key issuance authorization and organization eligibility | Partially completed | Admin authentication and organization existence are checked; active-plan, organization-state, and per-organization admin-scope checks are not applied during creation. |
+| Administrative authentication | Completed | Every `/admin` route requires the configured shared admin bearer key. |
+| Monthly quota and shared rate limiting | Completed | PostgreSQL usage accounting and Redis organization sliding window. |
+| Usage reporting | Partially completed | Current UTC month and optional daily breakdown; no arbitrary date range or per-key filter. |
+| Audit logging | Partially completed | Successful key lifecycle and plan assignment events; generic `admin` actor, no failed-attempt events. |
+| Redis limiter benchmark at 200 requests/second | Completed | Results, including the p95 threshold, are in `BENCHMARK.md`; EVALSHA did not outperform EVAL. |
+| Full-request-path performance benchmark | Completed | Before/after results and the measured plan-query optimization are in `PERFORMANCE.md`. |
+| External quote-provider integration | Out of scope | No provider contract or source was supplied; `/v1/quote` is a placeholder. |
+| Production identity provider, TLS, managed secrets and operations | Out of scope | Deployment-specific controls; shared admin credential is the application baseline. |
+| Per-request usage event store and historical reporting filters | Out of scope | The delivered accounting/reporting API uses monthly and daily aggregates. |
+
+The current repository implementation and its boundaries are authoritative for
+submission status. Sections below describe the design model and operational
+considerations; where they differ from the implementation, this checklist and
+the explicit limitation notes take precedence.
 
 ## 3. Non-Functional Requirements
 
 - **Security:** never persist or log plaintext API keys; protect administrative routes; validate organization scope; use TLS at ingress and secret-managed credentials in deployments.
 - **Consistency:** PostgreSQL is the source of truth for key status, plan assignment, and monthly quota. Redis is the shared short-window limiter.
-- **Availability:** individual application instances are replaceable. Database, Redis, and quote-provider failures have explicit behavior and observability.
+- **Availability:** individual application instances are replaceable. Redis failure returns `503`; a quote-provider integration and full dependency observability are not implemented.
 - **Scalability:** request handling is stateless across FastAPI instances; shared policy state is externalized to PostgreSQL and Redis.
 - **Maintainability:** separate HTTP, application service, domain policy, and infrastructure layers; schema changes are versioned with Alembic.
-- **Quality:** pytest covers policy and API behavior; Ruff enforces lint/format rules; mypy checks typed application boundaries.
+- **Quality:** pytest covers implemented policy and API behavior; Ruff, Black, and mypy checks are configured in CI.
 - **Privacy:** usage records contain identifiers and request metadata needed for operations and reporting, not credentials or unnecessary payload data.
 
 ## 4. Assumptions
@@ -69,7 +91,7 @@ Client â”€â”€ HTTPS â”€â”€> Load balancer / ingress â”€
                          quota periods, usage, audit
 ```
 
-Each FastAPI instance validates the bearer key by deriving its digest and looking up key metadata in PostgreSQL. It checks organization/key state and plan policy, obtains a shared Redis rate-limit decision, and makes an atomic PostgreSQL quota reservation before quote execution. The request outcome and usage event are persisted. The response is returned only after the selected accounting policy has been applied. Exact transaction boundaries and failure behavior are described below.
+Each FastAPI instance validates the bearer key by deriving its digest and looking up key metadata in PostgreSQL. It checks organization/key state and plan policy, obtains a shared Redis rate-limit decision, and makes an atomic PostgreSQL quota reservation before returning the placeholder quote. Monthly and daily aggregates are persisted; the current implementation does not create per-request usage events.
 
 ## 7. Component Responsibilities
 
@@ -78,15 +100,20 @@ Each FastAPI instance validates the bearer key by deriving its digest and lookin
 - **Authentication service:** parses bearer credentials, computes the SHA-256 digest, loads key/organization status, and returns an authenticated principal with organization and key identifiers.
 - **Key management service:** creates, rotates, and revokes key records; applies organization scope and state rules; emits audit records.
 - **Plan/policy service:** resolves quota and rate policy from the active plan. It is the single place that interprets plan entitlements.
-- **Rate limiter adapter:** applies a Redis-backed atomic fixed-window decision shared across instances and returns the remaining/reset metadata required for headers. The selected window and boundary behavior are configuration/policy.
-- **Quota/usage service:** reserves quota, persists outcome and aggregates/report data. PostgreSQL transactions protect quota decisions from concurrent requests.
-- **Quote provider adapter:** isolates the external or internal quote source and maps its response into the public quote schema.
+- **Rate limiter adapter:** applies a Redis-backed atomic organization sliding-window decision shared across instances and returns `Retry-After` on rejection.
+- **Quota/usage service:** reserves quota and persists monthly/daily aggregates. PostgreSQL transactions protect quota decisions from concurrent requests.
+- **Quote provider adapter:** **Future Work.** The current route returns a deterministic placeholder because no provider contract was supplied.
 - **Persistence layer:** SQLAlchemy 2 models and repositories encapsulate PostgreSQL access. Alembic owns schema evolution.
-- **Observability:** structured logs, metrics, and traces record request outcomes, dependency health, latency, and policy decisions without credential values.
+- **Observability:** **Future Work.** Metrics, traces, readiness checks, and operational dashboards are not implemented by this repository.
 
 ## 8. Database Design
 
-Use PostgreSQL 15 with SQLAlchemy 2 typed mappings. Names below are logical; physical naming conventions should be consistent and migrations must preserve constraints.
+The following is the broader target model. The delivered schema currently uses
+the `organization_plans` association, per-key `usage_records` and
+`daily_usage_records` aggregates, `audit_logs`, and `idempotency_records`; it
+does not include effective-dated plan assignments or per-request usage events.
+The database implementation uses PostgreSQL with SQLAlchemy 2 typed mappings
+and Alembic migrations.
 
 ### `organizations`
 
@@ -100,11 +127,15 @@ Use PostgreSQL 15 with SQLAlchemy 2 typed mappings. Names below are logical; phy
 - `id`: primary key.
 - `name`: unique plan identifier.
 - `monthly_quota`: non-negative request allowance.
-- `rate_limit_count`, `rate_limit_window_seconds`: short-term policy values.
+- `requests_per_minute`: non-negative organization-level sliding-window limit.
 - `active`: whether the plan can be assigned.
 - timestamps.
 
 ### `organization_plan_assignments`
+
+**Future Work:** effective-dated plan assignment history is not represented in
+the current schema; the current application keeps one assigned plan per
+organization.
 
 - `id`, `organization_id`, `plan_id` foreign keys.
 - `effective_from`, nullable `effective_until` timestamps.
@@ -115,12 +146,11 @@ Use PostgreSQL 15 with SQLAlchemy 2 typed mappings. Names below are logical; phy
 
 - `id`: primary key.
 - `organization_id`: required foreign key.
-- `key_digest`: unique, non-null SHA-256 digest of the high-entropy generated key; never plaintext.
-- `key_prefix`: non-secret display/lookup aid, not sufficient to authenticate.
-- `label`: customer-provided descriptive label.
-- `status`: active, revoked, or expired.
+- `key_hash`: unique, non-null SHA-256 digest of the high-entropy generated key; never plaintext.
+- `prefix`: non-secret display aid, not sufficient to authenticate.
+- `status`: active or revoked; expiration is represented by `expires_at`.
 - `created_at`, nullable `expires_at`, nullable `revoked_at`.
-- `rotated_from_key_id`: nullable self-reference for rotation auditability.
+- `rotation_expires_at`: overlap deadline on the old key; `rotated_from_id` links a replacement to its predecessor.
 - Index organization/status and enforce uniqueness of digest.
 
 ### `usage_periods`
@@ -132,6 +162,9 @@ Use PostgreSQL 15 with SQLAlchemy 2 typed mappings. Names below are logical; phy
 
 ### `usage_events`
 
+**Future Work:** current usage is recorded in monthly and daily aggregate tables;
+individual request events and outcomes are not persisted.
+
 - `id`: primary key (monotonic or UUID).
 - `organization_id`, `api_key_id` foreign keys; retain key identifier after revocation as needed for reports, with deletion restricted or retention managed explicitly.
 - `occurred_at`: UTC timestamp.
@@ -140,16 +173,20 @@ Use PostgreSQL 15 with SQLAlchemy 2 typed mappings. Names below are logical; phy
 - Do not store bearer values, full authorization headers, or quote payloads unless explicitly justified.
 - Index `(organization_id, occurred_at)` and `(api_key_id, occurred_at)` for reporting. Retention/partitioning is driven by measured volume and approved retention policy.
 
-### `admin_audit_events`
+### `audit_logs` (current implementation)
 
-- `id`, actor identifier, organization identifier, action, target identifier, timestamp, and sanitized metadata.
-- Record key creation, rotation, revocation, plan assignment changes, and administrative failures where appropriate. Never include the secret key.
+The current audit table records successful API key creation, rotation,
+revocation, and plan assignment. Its fields are `id`, `event_type`, `actor`,
+nullable `organization_id`, `resource_type`, `resource_id`, `details`, and
+`created_at`. The actor is the shared `admin` principal; individual identities
+and failed admin attempts are not recorded. Details are sanitized and never
+include plaintext keys.
 
 Foreign keys and check constraints should enforce non-negative counters and valid references. Database timestamps are stored consistently in UTC. Alembic migrations are the only supported schema change path.
 
 ## 9. API Design
 
-All endpoints use JSON. TLS is mandatory outside local development. Error responses use a consistent object with a stable machine-readable `code`, human-readable `message`, and `request_id`; never expose stack traces or secrets.
+Endpoints use JSON. TLS is required outside local development and must be configured at the deployment ingress. The current application returns FastAPI's standard error detail format; a shared error envelope with `code`, `message`, and `request_id` is not implemented. Responses do not intentionally expose stack traces or secrets.
 
 ### `GET /v1/quote`
 
@@ -159,33 +196,33 @@ All endpoints use JSON. TLS is mandatory outside local development. Error respon
 - **Errors:** `401` missing/invalid/revoked key; `403` inactive organization or disallowed access; `429` short-term rate or monthly quota exhausted; `503` unavailable required dependency/provider according to failure policy.
 - Read-only: no request body and no mutating operation.
 
-### `POST /admin/keys`
+### `POST /admin/api-keys`
 
 - **Auth:** required administrative identity, separate from customer API key authentication.
-- **Request:** organization identifier, descriptive label, and optional expiry if the product permits it. Rotation can reference the old key identifier; whether this uses the same endpoint or a dedicated action is an API contract decision. This RFC recommends explicit `rotation_of_key_id` in the request to make intent auditable.
+- **Request:** organization identifier and optional expiry. The current API does not accept a label; rotation uses the dedicated `POST /admin/api-keys/{key_id}/rotate` operation.
 - **Success:** `201 Created`; return key identifier, prefix, metadata, and the plaintext key exactly once. Do not include it in subsequent reads or logs.
 - **Errors:** `400` invalid input; `401` unauthenticated admin; `403` unauthorized organization scope; `404` unknown organization/key; `409` invalid state transition.
-- Revoke behavior must be exposed through an administrative operation. The required endpoint list does not specify its path, so a path and method must be agreed before implementation; a conventional design is `DELETE /admin/keys/{key_id}`. It is listed here as a contract gap, not a required endpoint already present in the specification.
+- Revoke behavior is exposed as `POST /admin/api-keys/{key_id}/revoke`.
 
 ### `GET /usage`
 
-- **Auth:** authenticated customer or administrative principal, scoped to authorized organization(s).
-- **Query:** `from` and `to` UTC timestamps; optional key identifier if role permits. Validate range ordering and maximum range according to reporting policy.
-- **Success:** `200 OK`; return organization identifier, requested interval, request count, and supported breakdowns (at minimum aggregate usage). Response granularity and retention depend on product decisions.
-- **Errors:** `401`, `403`, `400` for invalid ranges, and `503` if the authoritative report store is unavailable.
+- **Auth:** authenticated customer API key, scoped to its organization.
+- **Query:** optional `include_daily` boolean. The current API reports the UTC current month; it does not accept arbitrary time ranges or key filters.
+- **Success:** `200 OK`; return organization and plan metadata, current-month request count, monthly limit, remaining quota, percentage used, and optionally daily counts.
+- **Errors:** authentication errors use `401`; an inactive organization returns `403`.
 
 ## 10. Authentication & Authorization
 
 1. Extract exactly one bearer token from the Authorization header. Reject missing, malformed, or ambiguous credentials.
-2. Validate length and accepted key format before digest computation to bound input work. Keys are generated from a cryptographically secure random source; the exact encoding and visible prefix are fixed as a versioned format.
+2. **Future Work:** validate accepted key format and maximum length before digest computation. Current authentication hashes the presented bearer value and compares against stored digests; generated keys use a cryptographically secure random source and an `ak_` prefix.
 3. Compute a SHA-256 digest of the high-entropy generated key and look it up without storing plaintext. If key generation or entropy guarantees change, reassess a server-keyed HMAC digest and its versioned rotation strategy.
 4. Fetch key and organization state; reject revoked, expired, suspended, or otherwise inactive identities. Cache decisions only if revocation propagation is bounded and explicitly designed; baseline behavior uses the authoritative database lookup.
-5. Authorize endpoint actions against the principal. A customer key may call only the Quotes API. Administrative key creation requires an admin principal and organization-level authorization. Usage reports must never allow cross-organization access without explicit administrative scope.
+5. Authorize endpoint actions against the principal. The current implementation restricts customer keys to customer routes and scopes usage to their organization. Admin access is a shared configured bearer credential; organization-scoped admin roles are not implemented.
 6. Use generic authentication errors so responses do not reveal whether a particular key exists.
 
 ## 11. Security Design
 
-- Generate keys with a cryptographically secure random generator and sufficient entropy; return the secret once. Persist only a keyed one-way digest and non-sensitive prefix.
+- Generate keys with a cryptographically secure random generator and sufficient entropy; return the secret once. Persist only a SHA-256 digest and non-sensitive prefix. The digest is not keyed; generated keys have high entropy.
 - Use a dedicated secret-management mechanism for the digest key, database credentials, and Redis credentials. Do not commit secrets or place them in container images.
 - Enforce HTTPS at the ingress, restrict network access to PostgreSQL and Redis, and use least-privilege database roles. Application DB role should not perform schema migrations; migrations use a separate deployment role.
 - Validate all input with Pydantic schemas, use SQLAlchemy bound parameters, and limit payload and query sizes.
@@ -197,17 +234,17 @@ All endpoints use JSON. TLS is mandatory outside local development. Error respon
 
 ## 12. Rate Limiting Strategy
 
-Use Redis as a shared short-term limiter across all FastAPI instances. A fixed-window counter keyed by a non-secret stable API key identifier (or its digest-derived identifier) and policy window is the baseline because it is atomic and straightforward to operate. Use a Redis atomic operation/script so concurrent instances cannot exceed the configured counter through read-modify-write races. Set expiry aligned to the selected window. Return `429` with `Retry-After` and standard rate-limit headers where policy permits.
+The implementation uses Redis as a shared organization-level sliding-window limiter across FastAPI instances. An atomic Lua script prevents concurrent instances from exceeding the configured per-minute plan limit. Redis keys contain the environment and organization identifier, not raw key material. Excess requests receive `429` with `Retry-After`; standard rate-limit headers are not currently returned.
 
-The plan supplies limit count and window. The exact algorithm, window alignment, and whether the limit is per key, organization, or both are open product decisions; baseline recommendation is per key with an additional organization-level ceiling only if plans require it. Do not use raw key material in Redis keys. Redis key construction must include environment and policy version to avoid collisions.
+The plan supplies a per-minute request count. The current policy is organization-level; the limit is not per key. The Redis key includes the environment and organization identifier and never contains raw key material. Redis unavailability fails closed with `503`; the service does not switch to per-instance counters.
 
 Monthly quota is separate from the Redis short-window limiter and is authoritative in PostgreSQL. Reserve quota atomically using a conditional update/insert within a transaction; if no capacity remains, reject with `429`. A request must not be admitted based on an eventually consistent local counter. Define whether failed quote-provider calls consume a reservation; the assumption in this RFC is yes once execution begins. Redis unavailability fails closed for the short-term limiter by returning `503`; an explicit product decision may choose a bounded fallback, but per-instance in-memory limiting would not provide the required shared enforcement.
 
 ## 13. Usage Tracking
 
-For each authenticated request admitted for execution, create a durable usage event and update the corresponding organization/month counter. Ensure a consistent transaction boundary so usage reporting and quota accounting do not silently diverge. A practical baseline is: transactionally reserve quota and insert a pending usage record before provider execution; after execution, update outcome/status in a second transaction. If execution terminates before outcome update, a pending event remains observable and can be reconciled operationally. Whether quota reservation is refunded for failures is a product policy; this RFC assumes no refund after execution begins.
+The current implementation atomically reserves monthly quota and increments monthly and daily aggregates in PostgreSQL before returning the deterministic quote. Idempotent retries with the same API key and `Idempotency-Key` are counted once within 24 hours. It does not persist per-request events or outcome/status fields; those are a possible extension if the reporting contract requires them.
 
-`GET /usage` reads PostgreSQL, scopes every query by authorized organization, and supports UTC time filters. Aggregate queries should use the indexed event table or period counters according to requested detail. Do not calculate monthly quota solely from delayed asynchronous events. If reporting volume later makes direct queries too costly, introduce maintained rollups while preserving a defined source of truth and reconciliation process.
+`GET /usage` reads PostgreSQL and scopes queries to the authenticated organization. It reports the current UTC month and optionally daily counts. Date-range and per-key filters are not part of the current API.
 
 ## 14. Scaling Strategy
 
@@ -261,10 +298,11 @@ Liveness checks should report process health only. Readiness checks should inclu
 - It specifies required capabilities but does not assign plan prices, quota amounts, or rate limits.
 - It does not define a production cloud provider, deployment orchestrator, service-level objective, or recovery objective.
 - It describes a database-backed usage path; high-volume reporting may need rollups or partitioning after measured growth.
-- It does not include implementation code or benchmark claims.
-- The required endpoint list omits an explicit revocation endpoint and rotation contract; these must be finalized before the API is considered complete.
+- It does not provide a production quote-provider integration, individual admin identities, historical usage filters, per-request usage events, or production deployment controls.
+- The implemented admin key paths are `/admin/api-keys`, `/admin/api-keys/{key_id}/rotate`, and `/admin/api-keys/{key_id}/revoke`; they are listed in the README and are the compatibility contract for this repository.
+- Redis limiter results are recorded in `BENCHMARK.md`; full-request-path measurements are recorded separately in `PERFORMANCE.md`.
 
-## 19. Future Improvements
+## 19. Future Work
 
 - Add customer self-service key listing with secrets always redacted.
 - Add a dedicated rotation/revocation API contract, idempotency support, and optional scheduled expiry after product decisions.
@@ -275,7 +313,10 @@ Liveness checks should report process health only. Readiness checks should inclu
 - Add a quote cache only when provider freshness and licensing rules are known.
 - Add tenant export/deletion workflows aligned with retention and legal requirements.
 
-## 20. Four-week Implementation Roadmap
+## 20. Future Work Roadmap (Original plan; not implementation status)
+
+The following roadmap is historical planning material. Its items are not claims
+that those capabilities are present in the current repository.
 
 ### Week 1 â€” Service and persistence foundation
 

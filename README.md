@@ -17,6 +17,8 @@ counters across application instances.
 - Every `/admin` route requires the configured `ADMIN_API_KEY` bearer credential.
   Missing credentials return `401`; an incorrect key returns `403`; an
   unconfigured admin key fails closed with `503`.
+- Key rotation allows the old key to remain valid for the configured
+  `API_KEY_ROTATION_GRACE_SECONDS` interval, then authentication rejects it.
 - Monthly quota policy reads the organization's single active plan and reserves
   usage in the existing monthly `UsageRecord` table. Quota is aggregated across
   the organization's keys. The service returns `429` when the monthly allowance
@@ -27,9 +29,14 @@ counters across application instances.
   count once for 24 hours. Requests without this optional header retain
   per-request usage accounting.
 - `GET /usage` returns a read-only current-month summary for the authenticated
-  organization, including plan limits, requests used, and remaining quota.
-- Pytest covers administrative routes, API key authentication, and monthly quota
-  reservation.
+  organization, including plan limits, requests used, remaining quota,
+  percentage used, and an optional daily breakdown.
+- Administrative key creation, rotation, revocation, and plan assignment are
+  recorded in the audit log. The shared admin credential is recorded as the
+  actor; individual administrator identity is not available.
+- Pytest covers admin authorization and operations, API key authentication and
+  rotation, quota and usage behavior, shared Redis limiting, database key
+  secrecy, persistence across restarts, and idempotent retries.
 
 `GET /v1/quote` uses the authentication dependency, shared rate limiter, and
 monthly quota service and returns a clearly marked dummy quote. The service
@@ -72,7 +79,7 @@ revisions under `migrations/`.
 | `POST` | `/admin/plans` | Create a plan with request and monthly quota limits. |
 | `PATCH` | `/admin/organizations/{organization_id}/plan` | Assign a plan to an organization. |
 | `POST` | `/admin/api-keys` | Create an API key and return its plaintext once. |
-| `POST` | `/admin/api-keys/{key_id}/rotate` | Create a replacement key; the existing key remains active. |
+| `POST` | `/admin/api-keys/{key_id}/rotate` | Create a replacement key; the existing key remains valid during the configured overlap. |
 | `POST` | `/admin/api-keys/{key_id}/revoke` | Revoke an API key. |
 | `GET` | `/v1/quote` | Authenticate the API key, reserve monthly quota, and return a dummy quote. |
 | `GET` | `/usage` | Return current-month usage and plan limits for the authenticated organization. |
@@ -82,10 +89,12 @@ application is running.
 
 ## Implementation status
 
-The repository delivers its documented API, persistence, authentication,
-quota, rate-limiting, usage-reporting, migrations, test, and CI scope. The quote
-response is intentionally a deterministic placeholder. Deployment decisions
-and limitations are recorded in [docs/DESIGN.md](docs/DESIGN.md) and
+The repository implements the API paths listed above, persistence, customer and
+administrative authentication, quota and rate limiting, current-month usage
+reporting, audit records, migrations, tests, and CI checks. The quote response
+is a deterministic placeholder. Usage reporting is current-month only; it does
+not accept date-range or per-key filters. The design checklist and deployment
+limitations are recorded in [docs/DESIGN.md](docs/DESIGN.md) and
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 ## Requirements
@@ -128,8 +137,7 @@ pytest on pushes and pull requests.
 ## Rate limiter benchmark
 
 Start Redis with `docker compose up -d redis`, then run the same 200 requests per
-second benchmark against the script's original `EVAL` path and optimized
-`EVALSHA` path:
+second benchmark against the `EVAL` and `EVALSHA` paths:
 
 ```powershell
 uv run python -m scripts.benchmark_rate_limiter --redis-url redis://localhost:6379/0 --mode eval --rate 200 --duration 30
@@ -137,8 +145,9 @@ uv run python -m scripts.benchmark_rate_limiter --redis-url redis://localhost:63
 ```
 
 The benchmark reports achieved throughput and p50, p95, and p99 Redis command
-latency. See [BENCHMARK.md](BENCHMARK.md) for the measured environment, results,
-and optimization notes.
+latency. See [BENCHMARK.md](BENCHMARK.md) for measured results. In the recorded
+run, EVALSHA did not outperform EVAL; see [PERFORMANCE.md](PERFORMANCE.md) for a
+separate measured optimization on the full request path.
 
 Create an Alembic revision with `make revision message="describe schema change"`
 and apply it with `make migrate`. Review generated migrations before committing.

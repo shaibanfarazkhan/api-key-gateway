@@ -1,20 +1,18 @@
 # Redis Rate Limiter Benchmark
 
-## Environment
+## Environment and method
 
-The benchmark targets the Redis 7 service defined in `docker-compose.yml` and
-uses the host Python environment installed with `uv`. It times Redis command
-round trips for the production sliding-window Lua script. It does not include
-FastAPI, PostgreSQL, authentication, or quota-accounting latency.
+The benchmark used the Redis 7 service from `docker-compose.yml` and the host
+Python environment. It measures Redis command round-trip latency for the
+production sliding-window Lua script; it excludes FastAPI, PostgreSQL,
+authentication, and quota-accounting latency.
 
-The planned comparison offers 200 requests per second for 30 seconds (6,000
-measured requests per mode), with 20 unmeasured warm-up calls. The benchmark
-reports achieved throughput and nearest-rank p50, p95, and p99 latency.
+Each mode targeted 200 requests per second for 30 seconds (6,000 measured
+requests), with 20 warm-up calls. The script reports nearest-rank p50, p95, and
+p99 command latency and achieved throughput. The results below are the recorded
+single-run measurements; they are not multi-trial averages.
 
 ## Commands
-
-Start Redis and run the original full-script `EVAL` baseline and cached `EVALSHA`
-implementation with the same settings:
 
 ```powershell
 docker compose up -d redis
@@ -24,30 +22,35 @@ uv run python -m scripts.benchmark_rate_limiter --redis-url redis://localhost:63
 
 ## Results
 
-| Measurement | EVAL baseline | EVALSHA optimized |
+| Measurement | EVAL | EVALSHA |
 | --- | ---: | ---: |
-| Target rate | 200 requests/s | 200 requests/s |
-| Achieved rate | Not measured | Not measured |
-| p50 latency | Not measured | Not measured |
-| p95 latency | Not measured | Not measured |
-| p99 latency | Not measured | Not measured |
-| Successful script calls | Not measured | Not measured |
+| Target throughput | 200 requests/s | 200 requests/s |
+| Achieved throughput | 200.00 requests/s | 199.97 requests/s |
+| Successful script calls | 6,000 | 6,000 |
+| p50 latency | 2.200 ms | 2.777 ms |
+| p95 latency | 4.440 ms | 4.662 ms |
+| p99 latency | 5.237 ms | 5.400 ms |
+| p95 requirement (<10 ms) | Satisfied | Satisfied |
 
-Measurements could not be collected in the implementation environment because
-no Redis server was listening on `localhost:6379`, and Docker Desktop's daemon
-was unavailable. The commands above are ready to produce both measurements
-when Redis is available. No latency values are inferred or fabricated.
+EVALSHA did **not** outperform EVAL in this run: its measured p50, p95, and p99
+latencies were each slightly higher, and achieved throughput was marginally
+lower. These measurements do not support claiming a Redis latency improvement
+from script registration at this workload. The p95 latency requirement was
+satisfied by both modes.
 
-## Bottleneck and optimization
+## Bottleneck and optimization assessment
 
-The limiter sent the full Lua script body with every `EVAL` call even though
-Redis caches compiled scripts. The service now registers the script and uses
-Redis `EVALSHA` on subsequent calls, which sends the short script digest instead
-of retransmitting the full source. The benchmark compares the two call paths;
-the latency impact remains unverified until it can be run against Redis.
+The EVAL path transmits the Lua source on each command, while EVALSHA sends the
+registered script digest. Although this reduces the command payload, the
+measured Redis round-trip results above show no latency benefit here. Therefore,
+EVALSHA is documented as an alternate call path, not as a proven performance
+optimization. The separately measured full-request-path bottleneck and its
+optimization are documented in [PERFORMANCE.md](PERFORMANCE.md); that result
+must not be conflated with this Redis-only benchmark.
 
-## Final measurements
+## Limitations
 
-Pending a run against a live Redis service. Use identical settings for both
-commands, then record achieved rate and p50, p95, and p99 values in the results
-table above.
+These are local single-run measurements. Host CPU and memory were not captured,
+and the benchmark excludes application and database work. Treat the values as
+observations for the recorded environment, not as a production capacity
+guarantee. Re-run both modes with identical settings when comparing changes.
