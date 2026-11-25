@@ -7,6 +7,7 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -15,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 # process independent of a PostgreSQL service by selecting SQLite first.
 os.environ["DATABASE_URL"] = "sqlite://"
 
+from app.core.config import get_settings  # noqa: E402
 from app.core.database import Base  # noqa: E402
 from app.core.dependencies import get_db  # noqa: E402
 from app.main import app  # noqa: E402
@@ -36,11 +38,38 @@ def client() -> Generator[TestClient, None, None]:
         with test_session() as session:
             yield session
 
+    settings = get_settings()
+    previous_admin_key = settings.admin_api_key
+    settings.admin_api_key = SecretStr("test-admin-key")
+
     app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as test_client:
+    with TestClient(
+        app, headers={"Authorization": "Bearer test-admin-key"}
+    ) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+    settings.admin_api_key = previous_admin_key
     engine.dispose()
+
+
+def test_admin_route_accepts_authorized_admin(client: TestClient) -> None:
+    response = client.get(
+        "/admin/organizations", headers={"Authorization": "Bearer test-admin-key"}
+    )
+    assert response.status_code == 200
+
+
+def test_admin_route_rejects_unauthenticated_request(client: TestClient) -> None:
+    response = client.get("/admin/organizations", headers={"Authorization": ""})
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_admin_route_forbids_invalid_admin_key(client: TestClient) -> None:
+    response = client.get(
+        "/admin/organizations", headers={"Authorization": "Bearer wrong-key"}
+    )
+    assert response.status_code == 403
 
 
 def test_organization_create_list_get_and_duplicate_slug(client: TestClient) -> None:

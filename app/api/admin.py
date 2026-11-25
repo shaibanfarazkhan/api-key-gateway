@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.orm import Session
 
-from app.core.dependencies import get_db
+from app.core.dependencies import get_db, require_admin
 from app.models import APIKey, Organization, Plan
 from app.schemas.admin import (
     APIKeyCreate,
@@ -20,7 +20,9 @@ from app.schemas.admin import (
 )
 from app.services.admin import APIKeyService, OrganizationService, PlanService
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(
+    prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)]
+)
 
 
 @router.post(

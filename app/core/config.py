@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,6 +15,7 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://gateway:gateway@localhost:5432/gateway"
     redis_url: str = "redis://localhost:6379/0"
     secret_key: str = "development-only-change-me"
+    admin_api_key: SecretStr | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",
