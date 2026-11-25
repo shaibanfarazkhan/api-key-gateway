@@ -1,12 +1,19 @@
 """Persistence operations for monthly usage accounting."""
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
-from app.models import DailyUsageRecord, Organization, UsageRecord
+from app.models import (
+    DailyUsageRecord,
+    IdempotencyRecord,
+    Organization,
+    UsageRecord,
+)
+
+IDEMPOTENCY_RETENTION = timedelta(hours=24)
 
 
 class UsageRepository:
@@ -44,6 +51,18 @@ class UsageRepository:
         )
         return [(day, int(count)) for day, count in self.db.execute(statement)]
 
+    def has_recent_idempotency_key(self, *, api_key_id: UUID, key_hash: str) -> bool:
+        """Return whether the token has already been served in its retention window."""
+        cutoff = datetime.now(UTC) - IDEMPOTENCY_RETENTION
+        record_id = self.db.scalar(
+            select(IdempotencyRecord.id).where(
+                IdempotencyRecord.api_key_id == api_key_id,
+                IdempotencyRecord.key_hash == key_hash,
+                IdempotencyRecord.created_at >= cutoff,
+            )
+        )
+        return record_id is not None
+
     def reserve_monthly_request(
         self,
         *,
@@ -52,6 +71,7 @@ class UsageRepository:
         month: date,
         day: date,
         monthly_quota: int,
+        idempotency_key_hash: str | None = None,
     ) -> UsageRecord | None:
         """Increment this key's monthly usage if organization quota remains.
 
@@ -66,6 +86,26 @@ class UsageRepository:
         if locked_organization_id is None:
             self.db.rollback()
             return None
+
+        now = datetime.now(UTC)
+        if idempotency_key_hash is not None:
+            self.db.execute(
+                delete(IdempotencyRecord).where(
+                    IdempotencyRecord.organization_id == locked_organization_id,
+                    IdempotencyRecord.created_at < now - IDEMPOTENCY_RETENTION,
+                )
+            )
+            existing = self.db.scalar(
+                select(IdempotencyRecord).where(
+                    IdempotencyRecord.api_key_id == api_key_id,
+                    IdempotencyRecord.key_hash == idempotency_key_hash,
+                    IdempotencyRecord.created_at >= now - IDEMPOTENCY_RETENTION,
+                )
+            )
+            if existing is not None:
+                usage_record = self.db.get(UsageRecord, existing.usage_record_id)
+                self.db.rollback()
+                return usage_record
 
         total_used = self.db.scalar(
             select(func.coalesce(func.sum(UsageRecord.request_count), 0)).where(
@@ -112,6 +152,18 @@ class UsageRepository:
             self.db.add(daily_record)
         else:
             daily_record.request_count += 1
+
+        if idempotency_key_hash is not None:
+            self.db.flush()
+            self.db.add(
+                IdempotencyRecord(
+                    organization_id=locked_organization_id,
+                    api_key_id=api_key_id,
+                    usage_record_id=usage_record.id,
+                    key_hash=idempotency_key_hash,
+                    created_at=now,
+                )
+            )
 
         self.db.commit()
         self.db.refresh(usage_record)

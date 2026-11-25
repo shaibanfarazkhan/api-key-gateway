@@ -5,7 +5,9 @@ from collections.abc import Generator
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi import HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.testclient import TestClient
+from redis import Redis
 from redis.exceptions import ConnectionError as RedisConnectionError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -14,7 +16,9 @@ from sqlalchemy.pool import StaticPool
 # The application engine is constructed during import; use an isolated SQLite DB.
 os.environ["DATABASE_URL"] = "sqlite://"
 
+from app.core.config import get_settings  # noqa: E402
 from app.core.database import Base  # noqa: E402
+from app.core.dependencies import get_db  # noqa: E402
 from app.models import Organization, Plan  # noqa: E402
 from app.services.rate_limiter import (  # noqa: E402
     SLIDING_WINDOW_SCRIPT,
@@ -141,6 +145,55 @@ def test_limiter_state_is_shared_across_service_instances(db_session: Session) -
         second_instance.enforce(organization.id)
 
     assert exc_info.value.status_code == 429
+
+
+def test_limiter_is_shared_by_independent_redis_clients(db_session: Session) -> None:
+    settings = get_settings()
+    first_redis = Redis.from_url(settings.redis_url)
+    second_redis = Redis.from_url(settings.redis_url)
+    try:
+        first_redis.ping()
+    except RedisConnectionError:
+        first_redis.close()
+        second_redis.close()
+        if os.getenv("CI"):
+            raise
+        pytest.skip("A live Redis service is required for this integration test")
+
+    organization = create_organization(db_session, requests_per_minute=1)
+    redis_key = (
+        f"{settings.app_env}:api-gateway:rate-limit:organization:{organization.id}"
+    )
+    first_redis.delete(redis_key)
+    second_session_factory = sessionmaker(bind=db_session.get_bind())
+
+    def make_application(redis_client: Redis) -> FastAPI:
+        application = FastAPI()
+
+        def override_get_db() -> Generator[Session, None, None]:
+            with second_session_factory() as session:
+                yield session
+
+        application.dependency_overrides[get_db] = override_get_db
+
+        @application.get("/limited")
+        def limited(db: Session = Depends(get_db)) -> dict[str, str]:  # noqa: B008
+            RateLimitService(db, redis_client).enforce(organization.id)
+            return {"result": "allowed"}
+
+        return application
+
+    try:
+        with TestClient(make_application(first_redis)) as first_app_client:
+            first_response = first_app_client.get("/limited")
+        with TestClient(make_application(second_redis)) as second_app_client:
+            second_response = second_app_client.get("/limited")
+        assert first_response.status_code == 200
+        assert second_response.status_code == 429
+    finally:
+        first_redis.delete(redis_key)
+        first_redis.close()
+        second_redis.close()
 
 
 def test_rate_limits_are_isolated_per_organization(db_session: Session) -> None:

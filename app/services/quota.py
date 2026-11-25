@@ -1,5 +1,6 @@
 """Monthly quota policy for authenticated organizations."""
 
+import hashlib
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -25,6 +26,7 @@ class QuotaService:
         organization_id: UUID,
         api_key_id: UUID,
         monthly_quota: int | None = None,
+        idempotency_key: str | None = None,
     ) -> UsageRecord:
         if monthly_quota is None:
             organization = self.db.scalar(
@@ -48,6 +50,11 @@ class QuotaService:
             month=current_month,
             day=current_day,
             monthly_quota=monthly_quota,
+            idempotency_key_hash=(
+                hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+                if idempotency_key is not None
+                else None
+            ),
         )
         if usage_record is None:
             raise HTTPException(
@@ -55,3 +62,10 @@ class QuotaService:
                 detail="Monthly request quota exhausted",
             )
         return usage_record
+
+    def is_idempotent_retry(self, *, api_key_id: UUID, idempotency_key: str) -> bool:
+        """Check for an already served request before rate limiting a retry."""
+        key_hash = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+        return self.usage.has_recent_idempotency_key(
+            api_key_id=api_key_id, key_hash=key_hash
+        )

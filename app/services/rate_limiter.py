@@ -12,38 +12,9 @@ from sqlalchemy.orm import Session, selectinload
 
 from app.core.cache import RedisClient, redis_client
 from app.core.config import get_settings
+from app.core.rate_limit_script import SLIDING_WINDOW_SCRIPT, WINDOW_MILLISECONDS
 from app.models import Organization, Plan
 from app.services.plans import get_active_plan
-
-WINDOW_MILLISECONDS = 60_000
-
-SLIDING_WINDOW_SCRIPT = """
-local key = KEYS[1]
-local window_ms = tonumber(ARGV[1])
-local limit = tonumber(ARGV[2])
-local member = ARGV[3]
-local redis_time = redis.call('TIME')
-local now_ms = (tonumber(redis_time[1]) * 1000)
-    + math.floor(tonumber(redis_time[2]) / 1000)
-local cutoff = now_ms - window_ms
-
-redis.call('ZREMRANGEBYSCORE', key, '-inf', cutoff)
-
-if limit <= 0 then
-    return {0, math.ceil(window_ms / 1000)}
-end
-
-local count = redis.call('ZCARD', key)
-if count >= limit then
-    local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
-    local retry_ms = tonumber(oldest[2]) + window_ms - now_ms
-    return {0, math.max(1, math.ceil(retry_ms / 1000))}
-end
-
-redis.call('ZADD', key, now_ms, member)
-redis.call('PEXPIRE', key, window_ms)
-return {1, 0}
-"""
 
 
 class RateLimitService:
@@ -53,6 +24,10 @@ class RateLimitService:
         self.db = db
         self.redis = redis if redis is not None else redis_client
         self.environment = get_settings().app_env
+        register_script = getattr(self.redis, "register_script", None)
+        self._script = (
+            register_script(SLIDING_WINDOW_SCRIPT) if register_script else None
+        )
 
     def enforce(self, organization_id: UUID, plan: Plan | None = None) -> None:
         """Admit a request or raise the applicable policy/dependency error."""
@@ -73,14 +48,24 @@ class RateLimitService:
             f"{self.environment}:api-gateway:rate-limit:organization:{organization_id}"
         )
         try:
-            allowed, retry_after = cast(Any, self.redis).eval(
-                SLIDING_WINDOW_SCRIPT,
-                1,
-                redis_key,
-                WINDOW_MILLISECONDS,
-                plan.requests_per_minute,
-                str(uuid4()),
-            )
+            if self._script is not None:
+                allowed, retry_after = self._script(
+                    keys=[redis_key],
+                    args=[
+                        WINDOW_MILLISECONDS,
+                        plan.requests_per_minute,
+                        str(uuid4()),
+                    ],
+                )
+            else:
+                allowed, retry_after = cast(Any, self.redis).eval(
+                    SLIDING_WINDOW_SCRIPT,
+                    1,
+                    redis_key,
+                    WINDOW_MILLISECONDS,
+                    plan.requests_per_minute,
+                    str(uuid4()),
+                )
         except RedisError as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

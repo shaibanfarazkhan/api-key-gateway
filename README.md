@@ -23,6 +23,9 @@ counters across application instances.
   is exhausted.
 - `GET /v1/quote` also applies the plan's per-minute organization rate limit using
   an atomic Redis sliding window. Excess requests receive `429` with `Retry-After`.
+- Clients may send an `Idempotency-Key` header to make retries of a quote request
+  count once for 24 hours. Requests without this optional header retain
+  per-request usage accounting.
 - `GET /usage` returns a read-only current-month summary for the authenticated
   organization, including plan limits, requests used, and remaining quota.
 - Pytest covers administrative routes, API key authentication, and monthly quota
@@ -121,6 +124,21 @@ Use `make install-dev` to install dependencies. Run `make lint`, `make format`,
 `make typecheck`, and `make test` for local checks; `make ci` runs the complete
 local CI command set. The GitHub Actions workflow runs Ruff, Black, mypy, and
 pytest on pushes and pull requests.
+
+## Rate limiter benchmark
+
+Start Redis with `docker compose up -d redis`, then run the same 200 requests per
+second benchmark against the script's original `EVAL` path and optimized
+`EVALSHA` path:
+
+```powershell
+uv run python -m scripts.benchmark_rate_limiter --redis-url redis://localhost:6379/0 --mode eval --rate 200 --duration 30
+uv run python -m scripts.benchmark_rate_limiter --redis-url redis://localhost:6379/0 --mode evalsha --rate 200 --duration 30
+```
+
+The benchmark reports achieved throughput and p50, p95, and p99 Redis command
+latency. See [BENCHMARK.md](BENCHMARK.md) for the measured environment, results,
+and optimization notes.
 
 Create an Alembic revision with `make revision message="describe schema change"`
 and apply it with `make migrate`. Review generated migrations before committing.
