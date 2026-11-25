@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models import Organization, Plan
 from app.repositories.usage import UsageRepository
 from app.schemas.usage import ActivePlan, UsageOrganization, UsageSummary
+from app.services.plans import get_active_plan
 
 
 class UsageService:
@@ -31,19 +32,7 @@ class UsageService:
                 detail="Organization not found",
             )
 
-        active_plans = [plan for plan in organization.plans if plan.active]
-        if not active_plans:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Organization has no active plan",
-            )
-        if len(active_plans) > 1:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Organization must have exactly one active plan",
-            )
-
-        plan: Plan = active_plans[0]
+        plan: Plan = get_active_plan(organization)
         current_month = datetime.now(UTC).date().replace(day=1)
         requests_used = self.usage.get_monthly_request_count(
             organization_id=organization.id,

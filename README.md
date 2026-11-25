@@ -14,6 +14,9 @@ counters across application instances.
 - A reusable Bearer authentication dependency validates the stored digest, key
   status and expiration, and organization status. It returns the authenticated
   `Organization` and `APIKey` objects to dependent routes.
+- Every `/admin` route requires the configured `ADMIN_API_KEY` bearer credential.
+  Missing credentials return `401`; an incorrect key returns `403`; an
+  unconfigured admin key fails closed with `503`.
 - Monthly quota policy reads the organization's single active plan and reserves
   usage in the existing monthly `UsageRecord` table. Quota is aggregated across
   the organization's keys. The service returns `429` when the monthly allowance
@@ -90,7 +93,8 @@ and limitations are recorded in [docs/DESIGN.md](docs/DESIGN.md) and
 
 ## Local setup
 
-1. Copy `.env.example` to `.env` and replace `SECRET_KEY` with a generated secret.
+1. Copy `.env.example` to `.env` and replace both `SECRET_KEY` and `ADMIN_API_KEY`
+   with strong generated secrets.
 2. Start PostgreSQL and Redis: `docker compose up -d postgres redis`.
 3. Install application and development dependencies: `uv sync --all-groups`.
 4. Apply the checked-in database migration: `uv run alembic upgrade head`.

@@ -6,12 +6,11 @@ from typing import Any, cast
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from redis import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
-from app.core.cache import redis_client
+from app.core.cache import RedisClient, redis_client
 from app.core.config import get_settings
 from app.models import Organization, Plan
 from app.services.plans import get_active_plan
@@ -50,7 +49,7 @@ return {1, 0}
 class RateLimitService:
     """Enforce plan-based per-organization sliding windows in Redis."""
 
-    def __init__(self, db: Session, redis: Redis[Any] | None = None) -> None:
+    def __init__(self, db: Session, redis: RedisClient | None = None) -> None:
         self.db = db
         self.redis = redis if redis is not None else redis_client
         self.environment = get_settings().app_env

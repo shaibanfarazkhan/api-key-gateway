@@ -72,9 +72,7 @@ def require_admin(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Administrative authentication is not configured",
         )
-    if not compare_digest(
-        credentials.credentials, configured_key.get_secret_value()
-    ):
+    if not compare_digest(credentials.credentials, configured_key.get_secret_value()):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Administrative access forbidden",

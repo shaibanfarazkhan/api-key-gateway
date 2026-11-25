@@ -8,7 +8,7 @@
 
 This RFC defines a horizontally scalable API Key Gateway that authenticates organization-owned keys and serves a read-only Quotes API. It covers organization and plan records, key issuance, rotation and revocation, monthly quota enforcement, short-term rate limiting, and usage reporting through the required endpoints: `GET /v1/quote`, `POST /admin/keys`, and `GET /usage`.
 
-PostgreSQL is the authoritative store for organizations, plans, API key metadata, monthly quota accounting, and durable usage records. Redis is shared by all FastAPI instances and holds short-lived rate-limit counters. API key material is shown only at creation and is stored as a one-way keyed digest; authentication never requires storing the original key. FastAPI routes remain thin and delegate policy and persistence work to services.
+PostgreSQL is the authoritative store for organizations, plans, API key metadata, monthly quota accounting, and durable usage records. Redis is shared by all FastAPI instances and holds short-lived rate-limit counters. API key material is shown only at creation and is stored as a SHA-256 digest; generated API keys contain 256 bits of random secret material, and authentication never requires storing the original key. FastAPI routes remain thin and delegate policy and persistence work to services.
 
 The specification does not define quote data source, pricing values, quota sizes, rate-limit values, or administrative identity. This RFC defines interfaces and policy boundaries for those decisions and records them as open questions rather than assigning unsupported product values.
 
@@ -39,7 +39,7 @@ The specification does not define quote data source, pricing values, quota sizes
 - A request that passes authentication and reaches quote execution counts toward usage, including quote-provider failures unless product policy specifies otherwise. Authentication failures do not count against the organization's quota.
 - A calendar month in UTC defines a quota period. This avoids instance-local timezone differences; billing timezone and plan-specific reset behavior remain product decisions.
 - API keys are bearer credentials sent in the `Authorization: Bearer` header.
-- Administrative identity is provided by an upstream trusted identity mechanism or a separately configured admin credential mechanism. `POST /admin/keys` must not be exposed without one; its final identity provider is an open question.
+- The current implementation protects every `/admin` route with a separately configured shared `ADMIN_API_KEY` bearer credential. This does not provide individual identity, role or organization scope, or actor attribution; a production identity provider remains an operational decision.
 - The quote provider is an abstract dependency because its implementation and data contract were not supplied.
 - The plan contains at least a monthly request allowance and short-term rate policy. Actual values are configured as plan data and are not invented here.
 - PostgreSQL and Redis are deployed as shared services accessible to all application instances. Docker Compose is the local integration environment, not the production availability topology.
@@ -47,7 +47,7 @@ The specification does not define quote data source, pricing values, quota sizes
 ## 5. Open Questions
 
 1. What quote source is authoritative, what fields constitute a quote, and what freshness/cache policy is allowed?
-2. Which identity provider or credential model authorizes `POST /admin/keys`? Can organization administrators manage only their own organization's keys?
+2. Is the shared `ADMIN_API_KEY` acceptable for production, or should an identity provider authorize administrators and scope them to organizations?
 3. What are the plan names, monthly quotas, short-term rate windows/limits, and overage behavior?
 4. Should a quota-exhausted request return `429` or a distinct quota error/status, and should quota reset be calendar-month or subscription-anniversary based?
 5. What is the key rotation overlap duration, and can a customer trigger rotation themselves?
@@ -75,7 +75,7 @@ Each FastAPI instance validates the bearer key by deriving its digest and lookin
 
 - **API routers:** define paths, HTTP methods, status codes, request/response schemas, and dependency wiring. They do not implement policy or issue SQL directly.
 - **Schemas:** validate external payloads and serialize stable response contracts. Secrets are write-only and excluded from logs and repr output.
-- **Authentication service:** parses bearer credentials, computes the configured keyed digest, loads key/organization status, and returns an authenticated principal with organization and key identifiers.
+- **Authentication service:** parses bearer credentials, computes the SHA-256 digest, loads key/organization status, and returns an authenticated principal with organization and key identifiers.
 - **Key management service:** creates, rotates, and revokes key records; applies organization scope and state rules; emits audit records.
 - **Plan/policy service:** resolves quota and rate policy from the active plan. It is the single place that interprets plan entitlements.
 - **Rate limiter adapter:** applies a Redis-backed atomic fixed-window decision shared across instances and returns the remaining/reset metadata required for headers. The selected window and boundary behavior are configuration/policy.
@@ -115,7 +115,7 @@ Use PostgreSQL 15 with SQLAlchemy 2 typed mappings. Names below are logical; phy
 
 - `id`: primary key.
 - `organization_id`: required foreign key.
-- `key_digest`: unique, non-null keyed digest; never plaintext.
+- `key_digest`: unique, non-null SHA-256 digest of the high-entropy generated key; never plaintext.
 - `key_prefix`: non-secret display/lookup aid, not sufficient to authenticate.
 - `label`: customer-provided descriptive label.
 - `status`: active, revoked, or expired.
@@ -178,7 +178,7 @@ All endpoints use JSON. TLS is mandatory outside local development. Error respon
 
 1. Extract exactly one bearer token from the Authorization header. Reject missing, malformed, or ambiguous credentials.
 2. Validate length and accepted key format before digest computation to bound input work. Keys are generated from a cryptographically secure random source; the exact encoding and visible prefix are fixed as a versioned format.
-3. Compute a keyed digest using a server-held secret (HMAC-SHA-256 is the proposed baseline) and compare/lookup without storing plaintext. Keep the digest secret outside the database and rotate it through a versioned key strategy; existing records must remain verifiable during migration.
+3. Compute a SHA-256 digest of the high-entropy generated key and look it up without storing plaintext. If key generation or entropy guarantees change, reassess a server-keyed HMAC digest and its versioned rotation strategy.
 4. Fetch key and organization state; reject revoked, expired, suspended, or otherwise inactive identities. Cache decisions only if revocation propagation is bounded and explicitly designed; baseline behavior uses the authoritative database lookup.
 5. Authorize endpoint actions against the principal. A customer key may call only the Quotes API. Administrative key creation requires an admin principal and organization-level authorization. Usage reports must never allow cross-organization access without explicit administrative scope.
 6. Use generic authentication errors so responses do not reveal whether a particular key exists.
@@ -237,7 +237,7 @@ Liveness checks should report process health only. Readiness checks should inclu
 ## 16. Alternatives Considered
 
 - **Store plaintext API keys:** rejected because a database read or backup leak would immediately expose customer credentials.
-- **Unsalted ordinary SHA-256 digest:** insufficient against offline guessing if key entropy is ever weaker than expected and does not support straightforward server-side digest-key rotation. A keyed HMAC digest is the baseline.
+- **Unsalted ordinary SHA-256 digest:** acceptable for the current 256-bit randomly generated keys; reassess if externally chosen or lower-entropy keys are introduced. A keyed HMAC digest would add protection against weaker keys and support server-side digest-key rotation.
 - **In-memory rate limiter:** rejected because counters diverge across instances and reset on process restart.
 - **PostgreSQL-only short-term limiter:** possible, but adds write contention to the primary relational store for high-frequency counters; Redis is explicitly required for shared limiter state.
 - **Redis-only monthly quota:** rejected because expiration, eviction, and loss can undermine durable entitlement accounting and usage reporting.
@@ -246,10 +246,10 @@ Liveness checks should report process health only. Readiness checks should inclu
 
 ## 17. Risks
 
-- Unspecified admin authentication and quote-provider contracts block final API schemas and deployment boundaries.
+- The shared admin credential does not provide individual attribution or organization-level authorization; a production identity policy remains to be selected. The quote-provider contract is also open.
 - Redis outage policy trades availability for correct shared rate enforcement; fail-closed behavior can reduce service availability.
 - Synchronous durable usage writes increase request-path database work and can create contention under high concurrency.
-- HMAC digest-key rotation requires versioning and a migration path; losing the secret makes stored digests unusable for authentication.
+- If a server-keyed HMAC digest is adopted later, rotation requires versioning and a migration path; losing the secret would make stored digests unusable for authentication.
 - A rotation overlap period leaves two active credentials temporarily and requires precise lifecycle and audit rules.
 - Plan changes and quota reservation semantics can create billing disputes if reset, overage, and failure-counting rules are left ambiguous.
 - Usage retention and reporting granularity affect database size, privacy, and query performance.

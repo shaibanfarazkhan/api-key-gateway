@@ -21,9 +21,10 @@ that operators must account for.
 
 ## Deployment requirements
 
-- Administrative routes are not protected by an administrative identity in
-  this baseline. Restrict access to those routes at the network or ingress
-  boundary until an identity and authorization policy is configured.
+- Administrative routes require the configured shared `ADMIN_API_KEY` bearer
+  credential. This baseline does not provide individual admin identities,
+  role-based authorization, or admin-action audit records; restrict access at
+  the network or ingress boundary as an additional control.
 - The credentials in `.env.example` and Docker Compose are local-development
   values. Set strong secrets and managed database and Redis credentials for a
   deployed environment.

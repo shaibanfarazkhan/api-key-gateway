@@ -72,6 +72,17 @@ def test_admin_route_forbids_invalid_admin_key(client: TestClient) -> None:
     assert response.status_code == 403
 
 
+def test_admin_route_fails_closed_when_admin_key_is_unconfigured(
+    client: TestClient,
+) -> None:
+    settings = get_settings()
+    settings.admin_api_key = None
+    response = client.get(
+        "/admin/organizations", headers={"Authorization": "Bearer test-admin-key"}
+    )
+    assert response.status_code == 503
+
+
 def test_organization_create_list_get_and_duplicate_slug(client: TestClient) -> None:
     created = client.post(
         "/admin/organizations", json={"name": " Example Org ", "slug": "example-org"}
